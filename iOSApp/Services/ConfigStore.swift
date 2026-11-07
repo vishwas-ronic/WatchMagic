@@ -8,9 +8,16 @@ struct HAImportCache: Codable, Equatable {
     var states: [EntityState]
     var areas: [HAArea]
     var fetchedAt: Date
+    /// HA device name per entity (optional: older caches don't have it).
+    var deviceNames: [String: String]?
 
     func state(for entityID: String) -> EntityState? {
         states.first { $0.entityID == entityID }
+    }
+
+    /// Names of the HA areas that contain the entity.
+    func areaNames(for entityID: String) -> [String] {
+        areas.filter { $0.entityIDs.contains(entityID) }.map(\.name)
     }
 }
 
@@ -155,10 +162,33 @@ final class ConfigStore: ObservableObject {
     // MARK: - Devices
 
     /// Builds a device from an HA entity (kind inferred from the domain and
-    /// `supported_color_modes`, name = friendly name).
-    static func makeDevice(entityID: String, state: EntityState?) -> ControlledDevice {
+    /// `supported_color_modes`, name = friendly name cleaned for the room).
+    static func makeDevice(entityID: String, state: EntityState?, cache: HAImportCache?, roomName: String) -> ControlledDevice {
         let kind = DeviceKind.infer(entityID: entityID, supportedColorModes: state?.supportedColorModes) ?? .switch
-        return ControlledDevice(entityID: entityID, name: state?.displayName ?? entityID, kind: kind)
+        return ControlledDevice(entityID: entityID,
+                                name: cleanName(entityID: entityID, fallback: state?.displayName ?? entityID,
+                                                cache: cache, roomName: roomName),
+                                kind: kind)
+    }
+
+    /// Apple-Home-style name: device and room prefixes removed (see `NameCleaner`).
+    static func cleanName(entityID: String, fallback: String, cache: HAImportCache?, roomName: String) -> String {
+        let friendly = cache?.state(for: entityID)?.displayName ?? fallback
+        return NameCleaner.clean(friendlyName: friendly,
+                                 deviceName: cache?.deviceNames?[entityID],
+                                 roomNames: [roomName] + (cache?.areaNames(for: entityID) ?? []))
+    }
+
+    /// Re-applies the name cleaner to every device in a room (overwrites manual renames).
+    func tidyNames(inRoom roomID: UUID) {
+        let cache = importCache
+        update { c in
+            guard let room = c.room(id: roomID) else { return }
+            for i in c.devices.indices where room.deviceIDs.contains(c.devices[i].id) {
+                c.devices[i].name = Self.cleanName(entityID: c.devices[i].entityID, fallback: c.devices[i].name,
+                                                   cache: cache, roomName: room.name)
+            }
+        }
     }
 
     /// Adds entities to a room, skipping ones already in it.
@@ -167,7 +197,8 @@ final class ConfigStore: ObservableObject {
             guard let i = c.rooms.firstIndex(where: { $0.id == roomID }) else { return }
             let existing = Set(c.devices(in: c.rooms[i]).map(\.entityID))
             for eid in entityIDs where !existing.contains(eid) {
-                let d = Self.makeDevice(entityID: eid, state: importCache?.state(for: eid))
+                let d = Self.makeDevice(entityID: eid, state: importCache?.state(for: eid),
+                                        cache: importCache, roomName: c.rooms[i].name)
                 c.devices.append(d)
                 c.rooms[i].deviceIDs.append(d.id)
             }
@@ -227,11 +258,12 @@ final class ConfigStore: ObservableObject {
     @discardableResult
     func importArea(_ area: HAArea) -> Room {
         if let existing = room(forArea: area.id) { return existing }
-        var room = Room(name: area.name, haAreaID: area.id)
+        var room = Room(name: NameCleaner.cleanRoomName(area.name), haAreaID: area.id)
         update { c in
             var seen = Set<String>()
             for eid in area.entityIDs where seen.insert(eid).inserted {
-                let d = Self.makeDevice(entityID: eid, state: importCache?.state(for: eid))
+                let d = Self.makeDevice(entityID: eid, state: importCache?.state(for: eid),
+                                        cache: importCache, roomName: room.name)
                 c.devices.append(d)
                 room.deviceIDs.append(d.id)
             }
@@ -248,7 +280,10 @@ final class ConfigStore: ObservableObject {
         guard let client = makeClient() else { throw HAError.unauthorized }
         async let statesTask = client.controllableStates()
         async let areasTask = client.areas()
+        async let deviceNamesTask = client.deviceNames()
         let states = try await statesTask
+        // Best effort: without device names the cleaner still strips room prefixes.
+        let deviceNames = try? await deviceNamesTask
         var areas: [HAArea] = []
         var areaError: String?
         do {
@@ -256,7 +291,7 @@ final class ConfigStore: ObservableObject {
         } catch {
             areaError = "Areas: " + (HAError.from(error).errorDescription ?? "failed")
         }
-        let cache = HAImportCache(states: states, areas: areas, fetchedAt: Date())
+        let cache = HAImportCache(states: states, areas: areas, fetchedAt: Date(), deviceNames: deviceNames)
         importCache = cache
         saveCache(cache)
         return areaError

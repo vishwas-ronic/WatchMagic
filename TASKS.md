@@ -28,6 +28,8 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] Views: Home (current-room picker, sync status), Connect (Test/import), RoomDetail, DevicePicker, DeviceEditor, Settings (+ Traces)
 - [x] Builds for generic/platform=iOS (unsigned); launches in iOS 27 simulator, Home renders
 - [~] Test / Import / relay against the real HA from the phone
+- [x] Apple-Home-style names: `NameCleaner` (Kit, 9 tests from the real HA names) strips device/room prefixes and slugs; HA device names fetched on import; area room names tidied; "Tidy names" button per room
+- [ ] Decide: phone camera teach (user request 2026-11-07) — see proposal in chat
 
 ## 3. Watch app
 - [x] MotionService (heading-source fallback), RuntimeSession, WatchSyncService, ControlEngine

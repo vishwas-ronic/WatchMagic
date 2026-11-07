@@ -89,6 +89,17 @@ struct RoomDetailView: View {
                 } label: {
                     Label("Add devices", systemImage: "plus.circle")
                 }
+                if !devices.isEmpty {
+                    Button {
+                        Task {
+                            // Older imports lack HA device names; fetch them first (best effort).
+                            if store.importCache?.deviceNames == nil { _ = try? await store.refreshImport() }
+                            store.tidyNames(inRoom: room.id)
+                        }
+                    } label: {
+                        Label("Tidy names", systemImage: "textformat")
+                    }
+                }
             } header: {
                 HStack {
                     Text("Devices")

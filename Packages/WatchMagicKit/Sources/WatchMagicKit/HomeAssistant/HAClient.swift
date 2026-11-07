@@ -85,6 +85,29 @@ public struct HAClient: Sendable {
         return try Self.parseAreas(rendered)
     }
 
+    /// Renders `[{"e": entity_id, "d": device name}]` for every light/fan/switch
+    /// (device `name_by_user` if set, else `name`; null when the entity has no device).
+    public static let deviceNamesTemplate =
+        #"[{% for s in (states.light|list + states.fan|list + states.switch|list) %}{% set d = device_id(s.entity_id) %}{"e":"{{ s.entity_id }}","d":{{ ((device_attr(d,'name_by_user') or device_attr(d,'name')) if d else none)|tojson }}}{% if not loop.last %},{% endif %}{% endfor %}]"#
+
+    /// Device name per controllable entity ID, used by `NameCleaner`.
+    public func deviceNames() async throws -> [String: String] {
+        try Self.parseDeviceNames(try await renderTemplate(Self.deviceNamesTemplate))
+    }
+
+    public static func parseDeviceNames(_ rendered: String) throws -> [String: String] {
+        struct Row: Decodable { let e: String; let d: String? }
+        guard let data = rendered.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+              let rows = try? JSONDecoder().decode([Row].self, from: data) else {
+            throw HAError.invalidResponse
+        }
+        var out: [String: String] = [:]
+        for r in rows where controllableDomains.contains(ControlledDevice.domain(of: r.e)) {
+            if let d = r.d, !d.isEmpty { out[r.e] = d }
+        }
+        return out
+    }
+
     /// Parses the output of `areasTemplate`. Entity IDs are re-filtered to light/fan/switch.
     public static func parseAreas(_ rendered: String) throws -> [HAArea] {
         let trimmed = rendered.trimmingCharacters(in: .whitespacesAndNewlines)

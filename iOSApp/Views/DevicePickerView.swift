@@ -50,7 +50,9 @@ struct DevicePickerView: View {
                             HStack {
                                 Image(systemName: added || selection.contains(state.entityID) ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(added ? Color.secondary : Color.accentColor)
-                                EntityRow(state: state)
+                                EntityRow(state: state, title: ConfigStore.cleanName(
+                                    entityID: state.entityID, fallback: state.displayName, cache: store.importCache,
+                                    roomName: store.config.room(id: roomID)?.name ?? ""))
                             }
                         }
                         .foregroundStyle(.primary)

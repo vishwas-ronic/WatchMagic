@@ -125,7 +125,7 @@ struct ConnectView: View {
                 let existing = store.room(forArea: area.id)
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(area.name)
+                        Text(NameCleaner.cleanRoomName(area.name))
                         Text(count == 0 ? "No lights, fans or switches" : "\(count) device\(count == 1 ? "" : "s")")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -221,11 +221,13 @@ struct ConnectView: View {
 
 struct EntityRow: View {
     let state: EntityState
+    /// Cleaned display name; defaults to the HA friendly name.
+    var title: String? = nil
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(state.displayName)
+                Text(title ?? state.displayName)
                 Text(state.entityID)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
