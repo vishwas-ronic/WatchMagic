@@ -1,0 +1,13 @@
+*.xcodeproj
+*.xcworkspace
+!Packages/**/*.xcworkspace
+DerivedData/
+build/
+xcuserdata/
+.build/
+.swiftpm/
+.DS_Store
+# never commit secrets
+*.token
+ha_token
+Secrets.xcconfig
