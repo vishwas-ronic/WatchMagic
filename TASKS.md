@@ -56,3 +56,11 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [ ] Error-within-3 s edge case: if HA *times out* (packets dropped) and the phone is reachable, direct 3 s + relay can take ~6 s. Fast failures (HA stopped, no network) stay < 3 s. Decide whether to shorten.
 - [ ] WatchConnectivity stores the applicationContext (which carries the token, per spec 1.1.4) in the system's WC storage — check during the 2.2 Keychain `grep` test whether that lands inside the app container.
 - [ ] URLSession from this Mac's CLI processes can't reach LAN hosts (macOS Local Network privacy) while curl can — the opt-in live HA test in `swift test` can't run from the terminal.
+
+## 6. House 3D model integration (agreed with the house3d agent, 2026-11-07)
+- Read: `GET /local/house3d/house.json` (schema 1.1, metres; frame x = plan right, y = plan down, z up → **left-handed**, needs a reflection from our room frame). Rooms map by `space_id` (`ha_area_id` is null for now). Align on `spaces[].poly`, never `poly_render`.
+- Write: `POST /api/states/sensor.watchmagic_layout` {state: ISO time, attributes: {schema "watchmagic-layout/1", devices[], seats[], north_bearing_deg}} → HA automation merges into `/config/www/house3d/devices.json` (by entity_id / seat id; `delete: true` removes; one invalid item rejects the post).
+- North: `north_bearing_deg` = bearing of house +y, clockwise from TRUE north (expected ≈ 350–358).
+- [ ] Kit: HouseModel, HouseAlignment (2-corner fit + reflection), north bearing, layout payload builder, house-wide compass offset — in progress
+- [ ] iPhone: space picker, "Align to house" in PlacementView, push layout on save — in progress
+- [ ] Real-HA round trip with a self-test device (add → devices.json → delete) — in progress
