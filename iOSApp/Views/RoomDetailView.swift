@@ -8,6 +8,7 @@ struct RoomDetailView: View {
     @State private var name = ""
     @State private var didLoad = false
     @State private var showPicker = false
+    @State private var showPlacement = false
 
     private var room: Room? { store.config.room(id: roomID) }
 
@@ -29,6 +30,12 @@ struct RoomDetailView: View {
         .onDisappear(perform: commitName)
         .sheet(isPresented: $showPicker) {
             DevicePickerView(roomID: roomID)
+        }
+        .fullScreenCover(isPresented: $showPlacement) {
+            if let room {
+                PlacementView(roomID: room.id, devices: store.config.devices(in: room), existingSeat: room.seat)
+                    .environmentObject(store)
+            }
         }
     }
 
@@ -58,13 +65,32 @@ struct RoomDetailView: View {
             }
 
             Section {
+                Button {
+                    showPlacement = true
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Place devices with camera").font(.headline)
+                            Text("Aim your iPhone at each device and set your seat — no typing coordinates.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "camera.viewfinder").font(.title2)
+                    }
+                    .padding(.vertical, 4)
+                }
+                alignmentCard(room: room, devices: devices, refs: refs)
+            }
+
+            Section {
                 OptionalVectorField(value: room.seat) { v in
                     store.updateRoom(room.id) { $0.seat = v }
                 }
             } header: {
                 Text("Seat position (m)")
             } footer: {
-                Text("Optional. Where you usually sit, in a room frame of your choosing (x, y on the floor, z up). Needed only for devices placed by coordinates.")
+                Text("Optional. Where you usually sit, in a room frame of your choosing (x, y on the floor, z up). Needed only for devices placed by coordinates. Placing with the camera sets it for you and replaces typed values.")
             }
 
             Section {
@@ -118,6 +144,9 @@ struct RoomDetailView: View {
                         Text("Not derived").foregroundStyle(.secondary)
                     }
                 }
+                if let bias = refs.pitchBiasDeg {
+                    LabeledContent("Pitch bias", value: String(format: "%+.1f°", bias))
+                }
                 Picker("Anchor device", selection: Binding(
                     get: { room.anchorDeviceID },
                     set: { id in store.updateRoom(room.id) { $0.anchorDeviceID = id } }
@@ -138,7 +167,7 @@ struct RoomDetailView: View {
             } header: {
                 Text("Calibration")
             } footer: {
-                Text("The compass offset comes from devices that are both taught and have coordinates. The anchor is used when the watch has no compass heading: point at it and hold to zero.")
+                Text("The compass offset and pitch bias come from devices that are both taught and have coordinates. The anchor is used when the watch has no compass heading: point at it and hold to zero.")
             }
 
             Section {
@@ -151,6 +180,28 @@ struct RoomDetailView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .keyboardDoneButton()
+    }
+
+    /// "Teach one placed device" hint, or "Aligned ✓" once a placed device is taught.
+    @ViewBuilder
+    private func alignmentCard(room: Room, devices: [ControlledDevice], refs: ReferenceDirections) -> some View {
+        let placed = devices.filter { $0.coordinates != nil }
+        if !placed.isEmpty {
+            if room.seat == nil {
+                Label("Set your seat (Place devices with camera → Set my seat) so placed devices can be aimed at.",
+                      systemImage: "chair.lounge")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            } else if let off = refs.compassOffsetDeg {
+                Label(String(format: "Aligned ✓ (offset %.0f°)", off), systemImage: "checkmark.seal.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.green)
+            } else {
+                Label("Teach any one placed device on the watch to align this room.", systemImage: "applewatch")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+        }
     }
 
     private func commitName() {

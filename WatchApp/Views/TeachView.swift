@@ -13,11 +13,24 @@ struct TeachView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            if engine.needsAlignment {
+                Label("Teach one placed device to align this room", systemImage: "mappin.and.ellipse")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
             ForEach(engine.roomDevices) { device in
                 NavigationLink(value: Route.teachDevice(device.id)) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(device.name)
-                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            if device.coordinates != nil {
+                                Image(systemName: "mappin")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                    .accessibilityLabel("Placed")
+                            }
+                            Text(device.name)
+                                .lineLimit(1)
+                        }
                         Text(statusText(device))
                             .font(.caption2)
                             .foregroundStyle(device.calibrationStatus == .taught ? .green : .secondary)
@@ -29,7 +42,12 @@ struct TeachView: View {
     }
 
     private func statusText(_ device: ControlledDevice) -> String {
-        var s = device.calibrationStatus.displayName
+        var s: String
+        switch device.calibrationStatus {
+        case .coordinatesOnly: s = engine.needsAlignment ? "Placed · teach to align" : "Placed"
+        case .taught: s = device.coordinates != nil ? "Taught ✓ · placed" : "Taught ✓"
+        case .notPlaced: s = "Not placed"
+        }
         if sync.pendingTaughtIDs.contains(device.id) { s += " · syncing" }
         if engine.anchorDevice?.id == device.id { s += " · anchor" }
         return s

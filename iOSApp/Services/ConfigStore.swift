@@ -143,6 +143,7 @@ final class ConfigStore: ObservableObject {
                 c.currentRoomID = c.rooms.first?.id
             }
         }
+        for id in ids { WorldMapStore.delete(roomID: id) }
     }
 
     func setCurrentRoom(_ id: UUID?) {

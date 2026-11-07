@@ -19,6 +19,7 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] Tests: ActionMapper, TargetResolver, GestureDetector (synthetic CSV fixtures), HAClient, AimLock, model/sync, teach/zero/heading → `swift test` 104 tests, 0 failures (2 opt-in skips)
 - [x] Move teach averaging, zero-gesture rule, compass-anchor math, trace recorder from the watch app into the Kit + tests (spec 3.3)
 - [x] Relay entity-state fetch through the phone (`relayStateRequest`)
+- [x] `ARFrameConversion` (ARKit → room frame, z up) + `RoomPlacement` (frame-consistency merge) + pitch bias in `ReferenceDirections` (mean taught−geometric pitch, ±20°) → `PlacementTests` (10)
 - [x] Phone relay accepts only the exact services ActionMapper emits (`RelayRequest.isAllowed`, tested)
 - [x] HAClient defaults to an ephemeral, cache-free URLSession so the bearer header never lands in `Cache.db` (iOS app used `.shared`)
 - [ ] Replace synthetic gesture fixtures with real Ultra traces (Sensor Probe → Record) and retune thresholds
@@ -29,11 +30,13 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] Builds for generic/platform=iOS (unsigned); launches in iOS 27 simulator, Home renders
 - [~] Test / Import / relay against the real HA from the phone
 - [x] Apple-Home-style names: `NameCleaner` (Kit, 9 tests from the real HA names) strips device/room prefixes and slugs; HA device names fetched on import; area room names tidied; "Tidy names" button per room
-- [ ] Decide: phone camera teach (user request 2026-11-07) — see proposal in chat
+- [x] Camera (LiDAR) placement (user request 2026-11-07): RoomDetail → "Place devices with camera" (`PlacementView` + `PlacementSession`): reticle raycast (mesh → planes → estimated), Set my seat = camera position, undo/re-place, markers; Save writes seat + coordinates in one `update`; per-room `ARWorldMap` (App Support/WorldMaps, not synced) for relocalization; fresh frame clears stale coordinates after a warning (`RoomPlacement`, Kit); alignment hint card; `NSCameraUsageDescription`
+- [~] On the phone: AR placement accuracy, relocalization into a saved map, camera-permission prompt/denial, world-map save
 
 ## 3. Watch app
 - [x] MotionService (heading-source fallback), RuntimeSession, WatchSyncService, ControlEngine
 - [x] Views: Aim, Teach, SensorProbe (+ Record trace, latency)
+- [x] Teach/Aim: "Teach one placed device to align this room" hint; Teach list marks placed devices (verified: a local teach → `WatchSyncService.recomputeEffective` → `ControlEngine.apply` → candidates recomputed)
 - [x] StartWatchMagic App Intent + AppShortcutsProvider
 - [x] Builds for generic/platform=watchOS (unsigned)
 

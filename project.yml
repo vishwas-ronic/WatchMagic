@@ -38,6 +38,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSLocalNetworkUsageDescription: WatchMagic talks to your Home Assistant server on the local network.
+        NSCameraUsageDescription: WatchMagic uses the camera and LiDAR to place your devices in the room.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     settings:

@@ -146,6 +146,12 @@ struct AimView: View {
                 .font(.footnote)
                 .foregroundStyle(.red)
                 .lineLimit(2)
+        } else if engine.needsAlignment {
+            Text("Teach one placed device to align this room")
+                .font(.footnote)
+                .foregroundStyle(.orange)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
         } else if let line = engine.actionLine {
             Text(line)
                 .font(.footnote)

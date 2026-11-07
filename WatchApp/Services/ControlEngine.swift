@@ -280,6 +280,9 @@ final class ControlEngine: ObservableObject {
     @Published private(set) var room: Room?
     @Published private(set) var roomDevices: [ControlledDevice] = []
     @Published private(set) var anchorDevice: ControlledDevice?
+    /// The room has devices placed by coordinates (and a seat) but no derived
+    /// compass offset yet: teaching any one placed device aligns the room.
+    @Published private(set) var needsAlignment = false
     @Published private(set) var hasClient = false
     @Published private(set) var states: [String: EntityState] = [:]
     @Published private(set) var actionLine: String?
@@ -399,12 +402,19 @@ final class ControlEngine: ObservableObject {
         }
         hasClient = client != nil
 
+        // Recomputed on every config change, including a local teach (WatchSyncService
+        // calls back here), so a newly taught placed device makes the others aimable at once.
         var candidates: [TargetCandidate] = []
         var anchor: TargetCandidate?
+        var unaligned = false
         if let config, let newRoom {
-            candidates = ReferenceDirections(room: newRoom, devices: config.devices).candidates
+            let refs = ReferenceDirections(room: newRoom, devices: config.devices)
+            candidates = refs.candidates
             anchor = ReferenceDirections.anchor(room: newRoom, devices: config.devices)
+            unaligned = newRoom.seat != nil && refs.compassOffsetDeg == nil
+                && roomDevices.contains { $0.coordinates != nil }
         }
+        needsAlignment = unaligned
         anchorDevice = anchor.flatMap { config?.device(id: $0.id) }
         pipeline.configure(candidates: candidates, anchor: anchor,
                            settings: config?.settings ?? Settings(), resetLock: roomChanged)

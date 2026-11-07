@@ -99,7 +99,7 @@ struct DeviceEditorView: View {
             } header: {
                 Text("Coordinates (m)")
             } footer: {
-                Text("Optional. Position in the same frame as the room's seat.")
+                Text("Optional. Position in the same frame as the room's seat. “Place devices with camera” in the room replaces typed coordinates.")
             }
 
             Section {
