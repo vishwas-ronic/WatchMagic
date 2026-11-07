@@ -560,17 +560,25 @@ final class ControlEngine: ObservableObject {
 
     // MARK: - Entity states
 
+    /// Lock / selection change: fetch the state, via the iPhone if HA is unreachable directly.
     private func refreshState(_ entityID: String) {
-        Task { await fetchState(entityID) }
+        Task { await fetchState(entityID, relayFallback: true) }
     }
 
     /// GET /api/states/<id>. `force` skips the de-duplication of concurrent fetches.
-    private func fetchState(_ entityID: String, force: Bool = false) async {
+    /// `relayFallback`: on a network error, and if the phone is reachable,
+    /// fetch the state through the phone instead (spec 1.2.5).
+    private func fetchState(_ entityID: String, force: Bool = false, relayFallback: Bool = false) async {
         guard let client, force || !fetching.contains(entityID) else { return }
         let started = ProcessInfo.processInfo.systemUptime
         fetching.insert(entityID)
         defer { fetching.remove(entityID) }
-        if let s = try? await client.entityState(entityID) {
+        do {
+            setState(try await client.entityState(entityID), requestedAt: started)
+        } catch {
+            guard relayFallback, HAError.from(error).isNetworkError, sync.isReachable,
+                  let r = try? await sync.relayState(entityID),
+                  let s = r.states?.first(where: { $0.entityID == entityID }) else { return }
             setState(s, requestedAt: started)
         }
     }

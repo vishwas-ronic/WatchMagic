@@ -1,37 +1,50 @@
 # WatchMagic — Task checklist
 
-Legend: [x] done & verified · [ ] open · [~] code done, needs on-device verification (cannot be confirmed from the Mac)
+Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-device verification (needs the watch on a wrist / signing)
 
 ## 0. Setup
-- [x] git repo on `main` (no remote configured → "pull"/"push" = local main)
+- [x] git repo on `main` — no remote configured, so "pull" was a no-op and "push" = commits on local `main`
 - [x] XcodeGen installed (2.46.0)
-- [x] HA reachable with token: `GET /api/` → 200, bad token → 401, areas template works
-- [x] Signing team found: G93232N59R; iPhone 16 Pro Max + Apple Watch Ultra paired & available
-- [ ] `.gitignore`, `project.yml`, `README.md`
+- [x] HA reachable with token: `GET /api/` → 200, bad token → 401, areas template works (curl from the Mac)
+- [x] Signing team found in Xcode prefs/profiles: G93232N59R; iPhone 16 Pro Max + Apple Watch Ultra paired & `available`
+- [ ] **BLOCKED (on user):** no Apple ID signed in to Xcode → automatic signing can't create profiles for `ai.ronic.watchmagic(.watchkitapp)` → no device install
+- [x] `.gitignore`, `project.yml`, `README.md`
 
 ## 1. WatchMagicKit (shared package, pure logic)
-- [ ] Model: AppConfig, Room, ControlledDevice, Settings (Codable, versioned)
-- [ ] HomeAssistant: HAClient, HAModels, ActionMapper
-- [ ] Pointing: Vector3, ReferenceDirections, TargetResolver
-- [ ] Gestures: MotionSample, AimLockDetector, GestureDetector
-- [ ] Sync: SyncPayload
-- [ ] Tests: ActionMapper, TargetResolver, GestureDetector, HAClient → `swift test` green
+- [x] Model: AppConfig, Room, ControlledDevice, Settings (Codable, versioned, tolerant decoding)
+- [x] HomeAssistant: HAClient, HAModels, ActionMapper (+ domain-safety for kind overrides)
+- [x] Pointing: Vector3, ForearmGeometry, ReferenceDirections, TargetResolver
+- [x] Gestures: MotionSample/CSV, AimLockDetector, GestureDetector
+- [x] Sync: SyncPayload
+- [x] Tests: ActionMapper, TargetResolver, GestureDetector (synthetic CSV fixtures), HAClient, AimLock, model/sync → `swift test` green
+- [ ] Move teach averaging, zero-gesture rule, compass-anchor math from the watch app into the Kit + tests (spec 3.3) — in progress
+- [ ] Relay entity-state fetch through the phone (watch can't show state on lock when HA is only reachable via the phone) — in progress
+- [ ] Replace synthetic gesture fixtures with real Ultra traces (Sensor Probe → Record) and retune thresholds
 
 ## 2. iOS app
-- [ ] ConfigStore (JSON in App Support), Keychain token, PhoneSyncService (context push, taught vectors, traces, HA relay)
-- [ ] Views: Home (current-room picker, sync status), Connect (Test/import), RoomDetail, DevicePicker, DeviceEditor, Settings
-- [ ] Builds for generic/platform=iOS
+- [x] ConfigStore (JSON in App Support), Keychain token, PhoneSyncService (context push, taught vectors, traces, HA relay)
+- [x] Views: Home (current-room picker, sync status), Connect (Test/import), RoomDetail, DevicePicker, DeviceEditor, Settings (+ Traces)
+- [x] Builds for generic/platform=iOS (unsigned); launches in iOS 27 simulator, Home renders
+- [~] Test / Import / relay against the real HA from the phone
 
 ## 3. Watch app
-- [ ] MotionService (heading-source fallback), RuntimeSession, WatchSyncService, ControlEngine
-- [ ] Views: Aim, Teach, SensorProbe (+ Record trace)
-- [ ] StartWatchMagic App Intent
-- [ ] Builds for generic/platform=watchOS
+- [x] MotionService (heading-source fallback), RuntimeSession, WatchSyncService, ControlEngine
+- [x] Views: Aim, Teach, SensorProbe (+ Record trace, latency)
+- [x] StartWatchMagic App Intent + AppShortcutsProvider
+- [x] Builds for generic/platform=watchOS (unsigned)
 
-## 4. Done criteria
-- [ ] `xcodegen generate` clean
-- [ ] `swift test` passes
-- [ ] xcodebuild iOS + watchOS zero errors
-- [ ] Deployed to iPhone + Ultra via devicectl
-- [ ] README complete
-- [~] On-device acceptance (2.2 / 2.3) — needs a human with the watch on the wrist
+## 4. Done criteria (spec §2)
+- [x] `xcodegen generate` clean
+- [x] `swift test` passes
+- [x] xcodebuild iOS (with embedded watch app) + watchOS: zero errors, zero warnings from our sources
+- [ ] Deployed to iPhone + Ultra via devicectl — blocked on signing (see §0)
+- [x] README written; [ ] Sensor Probe findings table still to be filled from the device
+- [~] 2.2 iPhone on-device checks (Test success / 401, import, persistence, Keychain grep, room change → watch ≤ 5 s)
+- [~] 2.3 watch on-device checks: reference frames/heading source, rotation convention, crown-axis assumption,
+      teach all devices, aim accuracy 18/20, six actions, twist, latency ≤ 500 ms, 10-min no-false-trigger,
+      repeated flicks, HA-down failure ≤ 3 s, relay path, extended session 10 min + resume state, Action button
+
+## 5. Found along the way
+- [ ] Error-within-3 s edge case: if HA *times out* (packets dropped) and the phone is reachable, direct 3 s + relay can take ~6 s. Fast failures (HA stopped, no network) stay < 3 s. Decide whether to shorten.
+- [ ] WatchConnectivity stores the applicationContext (which carries the token, per spec 1.1.4) in the system's WC storage — check during the 2.2 Keychain `grep` test whether that lands inside the app container.
+- [ ] URLSession from this Mac's CLI processes can't reach LAN hosts (macOS Local Network privacy) while curl can — the opt-in live HA test in `swift test` can't run from the terminal.

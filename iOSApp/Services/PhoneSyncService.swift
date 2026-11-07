@@ -6,7 +6,7 @@ import WatchMagicKit
 /// - pushes `ConfigContext` (config + token) with `updateApplicationContext`
 ///   on launch and after every change;
 /// - receives taught vectors (`transferUserInfo`) and motion traces (`transferFile`);
-/// - relays Home Assistant service calls for the watch (`sendMessage` + reply).
+/// - relays Home Assistant service calls and state fetches for the watch (`sendMessage` + reply).
 ///
 /// WCSessionDelegate callbacks arrive on a background queue; they are
 /// `nonisolated` and hop to the main actor for any state access.
@@ -126,9 +126,7 @@ final class PhoneSyncService: NSObject, ObservableObject {
         guard let client else { return RelayResponse(errorMessage: "Phone has no Home Assistant token") }
         let call = request.call
         // Only the services WatchMagic itself emits, on entities it controls.
-        let entityDomain = ControlledDevice.domain(of: call.entityID)
-        guard HAClient.controllableDomains.contains(entityDomain),
-              HAClient.controllableDomains.contains(call.domain) || call.domain == "homeassistant" else {
+        guard request.isAllowed else {
             return RelayResponse(errorMessage: "Relay refused \(call.serviceName)")
         }
         do {
@@ -138,6 +136,18 @@ final class PhoneSyncService: NSObject, ObservableObject {
                 states.append(fresh)
             }
             return RelayResponse(states: states)
+        } catch {
+            return RelayResponse(errorMessage: HAError.from(error).errorDescription ?? "HA error")
+        }
+    }
+
+    /// Performs a relayed state fetch (`GET /api/states/<id>`) off the main actor.
+    nonisolated static func performStateRelay(_ request: RelayStateRequest, client: HAClient?) async -> RelayResponse {
+        guard let client else { return RelayResponse(errorMessage: "Phone has no Home Assistant token") }
+        // Only light./fan./switch. entities with a plain object id.
+        guard request.isAllowed else { return RelayResponse(errorMessage: "Relay refused state of \(request.entityID)") }
+        do {
+            return RelayResponse(states: [try await client.entityState(request.entityID)])
         } catch {
             return RelayResponse(errorMessage: HAError.from(error).errorDescription ?? "HA error")
         }
@@ -215,6 +225,19 @@ extension PhoneSyncService: WCSessionDelegate {
             Task { @MainActor in
                 let client = self.store?.makeClient()
                 let response = await Self.performRelay(request, client: client)
+                replyHandler(Self.replyDictionary(response))
+            }
+        case .relayStateRequest:
+            let request: RelayStateRequest
+            do {
+                request = try RelayStateRequest(dictionary: message)
+            } catch {
+                replyHandler(Self.replyDictionary(RelayResponse(errorMessage: "Bad relay request")))
+                return
+            }
+            Task { @MainActor in
+                let client = self.store?.makeClient()
+                let response = await Self.performStateRelay(request, client: client)
                 replyHandler(Self.replyDictionary(response))
             }
         case .config:

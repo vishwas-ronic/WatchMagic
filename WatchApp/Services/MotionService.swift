@@ -87,26 +87,20 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
 
     @Published private(set) var status = MotionStatus()
 
-    /// Re-anchoring: only with CLHeading.headingAccuracy ≤ this, degrees.
-    static let maxAnchorAccuracyDeg = 20.0
-    /// Low-pass factor per accepted heading update once anchored.
-    static let reanchorAlpha = 0.05
-
     private let manager = CMMotionManager()
     private let operationQueue: OperationQueue
     private let locationManager = CLLocationManager()
 
     private struct Shared {
         var source: HeadingSource = .zeroGesture
-        var yawOffsetDeg = 0.0
-        var headingReady = false
+        /// Yaw offset + readiness (compass anchoring / zero gesture), WatchMagicKit.
+        var anchor = HeadingAnchor()
         var pointingSign = 1.0
         /// Device +y ("12 o'clock") axis in the raw reference frame, last sample.
         var lastDeviceTop: Vector3?
         var lastAngularSpeed = 0.0
         /// Latest valid CLHeading.magneticHeading.
         var lastCompassHeading: Double?
-        var anchorUpdates = 0
         var onSample: (@Sendable (MotionFrame) -> Void)?
     }
     private let shared = Locked(Shared())
@@ -161,8 +155,8 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
         // A new arbitrary frame has a new yaw origin: forget the old offset.
         shared.withLock {
             $0.source = source
-            $0.yawOffsetDeg = 0
-            $0.headingReady = (source == .magneticNorthFrame)
+            $0.anchor.reset()
+            if source == .magneticNorthFrame { $0.anchor.markAnchored() }
             $0.lastDeviceTop = nil
         }
         var s = status
@@ -216,10 +210,9 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
 
     /// Zero gesture result: absolute yaw offset (degrees) to add to raw yaw.
     func applyZero(offsetDeg: Double) {
-        let off = Angle.normalizedDeg(offsetDeg)
-        shared.withLock {
-            $0.yawOffsetDeg = off
-            $0.headingReady = true
+        let off = shared.withLock { s -> Double in
+            s.anchor.set(offsetDeg: offsetDeg)
+            return s.anchor.offsetDeg
         }
         status.yawOffsetDeg = off
         status.headingReady = true
@@ -228,7 +221,7 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
     /// Declares the current (arbitrary) yaw as the reference — used when the
     /// first device of a room is taught without any anchor to zero against.
     func markHeadingReady() {
-        shared.withLock { $0.headingReady = true }
+        shared.withLock { $0.anchor.markAnchored() }
         status.headingReady = true
     }
 
@@ -236,8 +229,7 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
     func resetHeading() {
         let ready = shared.withLock { s -> Bool in
             guard s.source != .magneticNorthFrame else { return true }
-            s.headingReady = false
-            s.yawOffsetDeg = 0
+            s.anchor.reset()
             return false
         }
         status.headingReady = ready
@@ -267,10 +259,10 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
             heading: heading
         )
         let raw = ForearmGeometry.worldPointing(rotationMatrix: m, sign: snap.pointingSign)
-        let pointing = raw.rotatedAboutZ(deg: snap.yawOffsetDeg)
+        let pointing = raw.rotatedAboutZ(deg: snap.anchor.offsetDeg)
         let kin = MotionKinematics(sample: sample, pointingSign: snap.pointingSign)
-        // Device +y axis in the reference frame (first-row convention → second row).
-        let top = Vector3(m[1][0], m[1][1], m[1][2])
+        // Device +y axis in the reference frame (same convention as worldPointing).
+        let top = HeadingAnchor.deviceTopAxis(rotationMatrix: m)
         shared.withLock {
             $0.lastDeviceTop = top
             $0.lastAngularSpeed = kin.angularSpeed
@@ -278,7 +270,7 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
 
         snap.onSample?(MotionFrame(
             sample: sample, kinematics: kin, rawPointing: raw, pointing: pointing,
-            headingReady: snap.headingReady, source: snap.source, pointingSign: snap.pointingSign
+            headingReady: snap.anchor.isAnchored, source: snap.source, pointingSign: snap.pointingSign
         ))
 
         // Rate measurement.
@@ -298,12 +290,12 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
         }
         let deg = 180 / Double.pi
         let yaw = dm.attitude.yaw * deg, pitch = dm.attitude.pitch * deg, roll = dm.attitude.roll * deg
-        let topHeading: Double? = snap.headingReady && hypot(top.x, top.y) > 0.3
-            ? top.rotatedAboutZ(deg: snap.yawOffsetDeg).compassHeadingDeg : nil
+        let topHeading: Double? = snap.anchor.isAnchored && hypot(top.x, top.y) > 0.3
+            ? top.rotatedAboutZ(deg: snap.anchor.offsetDeg).compassHeadingDeg : nil
         let motionHeading = snap.source == .magneticNorthFrame && dm.heading >= 0 ? dm.heading : nil
         let fieldAccuracy = snap.source == .magneticNorthFrame ? Self.describe(dm.magneticField.accuracy) : nil
         let rate = measuredRate, conv = lastConvention, v1 = votesRefToDev, v2 = votesDevToRef
-        let offset = snap.yawOffsetDeg, ready = snap.headingReady, anchors = snap.anchorUpdates
+        let offset = snap.anchor.offsetDeg, ready = snap.anchor.isAnchored, anchors = snap.anchor.compassUpdates
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             var s = self.status
@@ -331,28 +323,14 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
         let valid = accuracy >= 0
         let result = shared.withLock { s -> (offset: Double, ready: Bool, anchors: Int) in
             s.lastCompassHeading = valid ? heading : nil
-            // CLHeading is the heading of the device's reference direction —
-            // ASSUMED to be the top (+y, 12 o'clock) of the watch, NOT the
-            // forearm (±x). So anchor with the device's +y axis:
-            //   world yaw(+y) = −heading  (compass is clockwise, yaw CCW)
-            //   offset        = world yaw(+y) − raw yaw(+y)
-            // Only when +y is within ~30° of horizontal (its yaw is well
-            // defined and the compass tilt compensation is at its best), the
-            // wrist is steady (heading lags motion slightly), and the reported
-            // accuracy is good.
-            if s.source == .compassAnchored, valid, accuracy <= Self.maxAnchorAccuracyDeg,
-               let top = s.lastDeviceTop, abs(top.z) <= 0.5, s.lastAngularSpeed < 0.5 {
-                let target = Angle.normalizedDeg(-heading - top.yawDeg)
-                if s.headingReady {
-                    let diff = Angle.normalizedDeg(target - s.yawOffsetDeg)
-                    s.yawOffsetDeg = Angle.normalizedDeg(s.yawOffsetDeg + Self.reanchorAlpha * diff)
-                } else {
-                    s.yawOffsetDeg = target
-                    s.headingReady = true
-                }
-                s.anchorUpdates += 1
+            // Accuracy / tilt / steadiness gating, first-set and 5% blending
+            // live in WatchMagicKit's HeadingAnchor (CLHeading is assumed to be
+            // the heading of the watch's top, +y, axis).
+            if s.source == .compassAnchored {
+                s.anchor.compassUpdate(headingDeg: heading, accuracyDeg: accuracy,
+                                       deviceTop: s.lastDeviceTop, angularSpeed: s.lastAngularSpeed)
             }
-            return (s.yawOffsetDeg, s.headingReady, s.anchorUpdates)
+            return (s.anchor.offsetDeg, s.anchor.isAnchored, s.anchor.compassUpdates)
         }
         var st = status
         st.compassHeadingDeg = valid ? heading : nil

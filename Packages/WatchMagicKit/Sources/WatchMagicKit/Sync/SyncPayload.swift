@@ -9,6 +9,7 @@ import Foundation
 /// | ConfigContext        | updateApplicationContext (phone→watch) | "config"           |
 /// | TaughtVectorUpdate   | transferUserInfo (watch→phone)         | "taughtVector"     |
 /// | RelayRequest         | sendMessage (watch→phone)              | "relayRequest"     |
+/// | RelayStateRequest    | sendMessage (watch→phone)              | "relayStateRequest"|
 /// | RelayResponse        | sendMessage reply (phone→watch)        | "relayResponse"    |
 /// | motion trace CSV     | transferFile (watch→phone), metadata `SyncPayload.traceMetadata(...)` | "trace" |
 public enum SyncPayload {
@@ -26,6 +27,9 @@ public enum SyncPayload {
         case config
         case taughtVector
         case relayRequest
+        /// Added after v1: an older phone answers it with
+        /// `RelayResponse(errorMessage: "Unsupported message")`.
+        case relayStateRequest
         case relayResponse
         case trace
     }
@@ -139,6 +143,22 @@ public struct RelayRequest: Codable, Equatable, Sendable {
 
     public init(call: ServiceCall) { self.call = call }
 
+    /// Services `ActionMapper` can emit, per domain. The phone relays nothing else.
+    public static let allowedServices: [String: Set<String>] = [
+        "light": ["turn_on", "turn_off"],
+        "switch": ["turn_on", "turn_off"],
+        "fan": ["turn_on", "turn_off", "increase_speed", "decrease_speed"],
+        "homeassistant": ["toggle"],
+    ]
+
+    /// True when the call is one WatchMagic itself would make: an allowed
+    /// domain/service pair on a light/fan/switch entity with a plain object id.
+    public var isAllowed: Bool {
+        guard RelayStateRequest(entityID: call.entityID).isAllowed,
+              RelayRequest.allowedServices[call.domain]?.contains(call.service) == true else { return false }
+        return true
+    }
+
     public func dictionary() throws -> [String: Any] {
         [SyncPayload.Keys.kind: SyncPayload.Kind.relayRequest.rawValue,
          SyncPayload.Keys.payload: try SyncPayload.encodeJSON(self)]
@@ -147,6 +167,37 @@ public struct RelayRequest: Codable, Equatable, Sendable {
     public init(dictionary d: [String: Any]) throws {
         try SyncPayload.checkKind(d, .relayRequest)
         self = try SyncPayload.decodeJSON(RelayRequest.self, d, key: SyncPayload.Keys.payload)
+    }
+}
+
+/// Watch → phone: "please GET /api/states/<entityID> for me". Answered with a
+/// `RelayResponse` carrying `states: [state]` or an error message. A separate
+/// kind (rather than an optional field on `RelayRequest`) so an older phone
+/// can never mistake it for a service call.
+public struct RelayStateRequest: Codable, Equatable, Sendable {
+    public var entityID: String
+
+    public init(entityID: String) { self.entityID = entityID }
+
+    /// Only entity IDs of the controllable domains (light/fan/switch) with a
+    /// plain HA object id (`[a-z0-9_]+`), so the ID is safe to put in a URL path.
+    public var isAllowed: Bool {
+        let parts = entityID.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 2, HAClient.controllableDomains.contains(String(parts[0])) else { return false }
+        let object = parts[1]
+        return !object.isEmpty && object.unicodeScalars.allSatisfy {
+            ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "_"
+        }
+    }
+
+    public func dictionary() throws -> [String: Any] {
+        [SyncPayload.Keys.kind: SyncPayload.Kind.relayStateRequest.rawValue,
+         SyncPayload.Keys.payload: try SyncPayload.encodeJSON(self)]
+    }
+
+    public init(dictionary d: [String: Any]) throws {
+        try SyncPayload.checkKind(d, .relayStateRequest)
+        self = try SyncPayload.decodeJSON(RelayStateRequest.self, d, key: SyncPayload.Keys.payload)
     }
 }
 

@@ -8,7 +8,7 @@ import WatchMagicKit
 /// - sends taught vectors (`transferUserInfo`) and keeps them as local
 ///   overrides until the phone echoes them back in a config;
 /// - sends motion traces (`transferFile`);
-/// - relays Home Assistant calls through the phone (`sendMessage` + reply).
+/// - relays Home Assistant calls and state fetches through the phone (`sendMessage` + reply).
 ///
 /// Local taught-vector merge rule: every taught/cleared vector is recorded in
 /// `pendingTaught[deviceID]` (persisted) and applied on top of every received
@@ -113,10 +113,19 @@ final class WatchSyncService: NSObject, ObservableObject, WCSessionDelegate {
     /// Asks the phone to make the Home Assistant call. Throws `RelayError`
     /// (unreachable/timeout) or returns the phone's `RelayResponse`.
     func relay(_ call: ServiceCall, timeout: TimeInterval = 3) async throws -> RelayResponse {
+        try await sendRelay(try RelayRequest(call: call).dictionary(), timeout: timeout)
+    }
+
+    /// Asks the phone to fetch an entity's state (`GET /api/states/<id>`).
+    /// Same errors as `relay(_:)`; on success the response carries `states: [state]`.
+    func relayState(_ entityID: String, timeout: TimeInterval = 3) async throws -> RelayResponse {
+        try await sendRelay(try RelayStateRequest(entityID: entityID).dictionary(), timeout: timeout)
+    }
+
+    private func sendRelay(_ message: [String: Any], timeout: TimeInterval) async throws -> RelayResponse {
         guard let s = session, s.activationState == .activated, s.isReachable else {
             throw RelayError.phoneUnreachable
         }
-        let message = try RelayRequest(call: call).dictionary()
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<RelayResponse, Error>) in
             let once = ResumeOnce(cont)
             s.sendMessage(message, replyHandler: { reply in
