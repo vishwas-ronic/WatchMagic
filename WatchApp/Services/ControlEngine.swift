@@ -36,6 +36,8 @@ enum PipelineEvent: Sendable {
     case locked(UUID)
     case selectionChanged(UUID)
     case gesture(DetectedGesture, target: UUID)
+    /// A twist acted on a lock: learn the device's direction from where the arm pointed.
+    case learn(deviceID: UUID, observed: Vector3, reference: Vector3)
     case zeroed(correctionDeg: Double)
     case teach(TeachCapture.Event)
     case recordingProgress(remaining: TimeInterval)
@@ -93,6 +95,11 @@ final class ControlPipeline: @unchecked Sendable {
     private var names: [UUID: String] = [:]
     private var lockedID: UUID?
     private var lockedAtT: TimeInterval = 0
+    /// Rotate-and-hold brightness / speed while locked.
+    private var knob = RollKnob()
+    /// Mean pointing while steady on the current lock (aim learning).
+    private var lockPointing = PointingAverage()
+    private var learnedThisLock = false
     /// Phone-guided gesture-training recording in progress.
     private var trainer: (start: TrainingStart, recorder: TrainingRecorder, wearing: WearingInfo)?
     private var snap = AimSnapshot()
@@ -317,6 +324,10 @@ final class ControlPipeline: @unchecked Sendable {
         case .locked(let id):
             lockedID = id
             lockedAtT = t
+            knob.setBaseline(gravity: f.sample.gravity, pointingSign: f.pointingSign)
+            lockPointing.reset()
+            lockPointing.add(f.pointing)
+            learnedThisLock = false
             Diag.event("lock", ["device": names[id], "candidates": aimLock.lock?.candidates.count,
                                 "angleDeg": angle(to: id, f.pointing), "pitchDeg": k.pitchDeg,
                                 "speed": k.angularSpeed])
@@ -328,9 +339,29 @@ final class ControlPipeline: @unchecked Sendable {
                                   "onTarget": lockedID.map { resolution.ids.contains($0) },
                                   "pitchDeg": k.pitchDeg, "speed": k.angularSpeed])
             lockedID = nil
+            knob.reset()
             urgent = true
         default:
             break
+        }
+
+        // Rotate and hold (brightness / fan speed) while locked.
+        if canAim, let lock = aimLock.lock {
+            if k.angularSpeed < 0.6, !knob.isEngaged { lockPointing.add(f.pointing) }
+            switch knob.update(t: t, gravity: f.sample.gravity, pointingSign: f.pointingSign,
+                               wristIsLeft: f.wristIsLeft, angularSpeed: k.angularSpeed) {
+            case .step(let dir)?:
+                let g = DetectedGesture(gesture: dir > 0 ? .flickUp : .flickDown, peakRate: 0, t: t)
+                aimLock.noteGesture(at: t)
+                Diag.event("knob_step", ["dir": dir, "device": names[lock.selectedID],
+                                         "rollDeg": knob.angleDeg, "pitchDeg": k.pitchDeg])
+                emit(.gesture(g, target: lock.selectedID))
+                urgent = true
+            case .released?:
+                Diag.event("knob_release", ["device": names[lock.selectedID]])
+            case nil:
+                break
+            }
         }
 
         // Gestures: act only when locked and the gesture window is open.
@@ -343,6 +374,8 @@ final class ControlPipeline: @unchecked Sendable {
             else if trainer != nil { reason = "training" }
             else if !f.headingReady { reason = "heading not ready" }
             else if aimLock.lock == nil { reason = "not locked" }
+            // Rotating back from a rotate-and-hold must not toggle.
+            else if knob.isActive(at: g.t, within: 0.8) { reason = "knob active" }
             // Twist acts whenever locked (it is strong enough on its own); the
             // gesture window only gates flicks.
             else if g.gesture != .twist && !aimLock.isGestureWindowOpen(at: g.t) { reason = "window closed" }
@@ -360,6 +393,16 @@ final class ControlPipeline: @unchecked Sendable {
             }
             if reason == nil, let target = g.gesture == .twist ? aimLock.lockedID : aimLock.target(forGestureAt: g.t) {
                 aimLock.noteGesture(at: g.t)
+                if g.gesture == .twist {
+                    // Re-take the knob baseline once steady (a wrist left rotated after a snap must not step).
+                    knob.reset()
+                    // Aim learning: once per lock, unambiguous locks only.
+                    if !learnedThisLock, aimLock.lock?.isAmbiguous == false, let observed = lockPointing.mean,
+                       let reference = candidates.first(where: { $0.id == target })?.direction {
+                        learnedThisLock = true
+                        emit(.learn(deviceID: target, observed: observed, reference: reference))
+                    }
+                }
                 snap.lastGestureActed = true
                 Diag.event("gesture", fields)
                 emit(.gesture(g, target: target))
@@ -814,6 +857,8 @@ final class ControlEngine: ObservableObject {
             if let d = device(id) { refreshState(d.entityID) }
         case .gesture(let g, let target):
             handleGesture(g, target: target)
+        case .learn(let id, let observed, let reference):
+            learnAim(deviceID: id, observed: observed, reference: reference)
         case .zeroed(let correction):
             motion.applyZero(offsetDeg: correction)
             WKInterfaceDevice.current().play(.success)
@@ -853,6 +898,19 @@ final class ControlEngine: ObservableObject {
         }
     }
 
+    /// Nudges a device's direction towards where the arm pointed for a twist
+    /// that acted on it, and saves it as its taught vector (synced to the phone).
+    private func learnAim(deviceID: UUID, observed: Vector3, reference: Vector3) {
+        guard let room, let device = device(deviceID) else { return }
+        guard let updated = AimLearning.blend(reference: reference, observed: observed) else {
+            Diag.event("learn_skip", ["device": device.name, "offDeg": reference.angle(to: observed)])
+            return
+        }
+        Diag.event("learn", ["device": device.name, "offDeg": reference.angle(to: observed),
+                             "movedDeg": reference.angle(to: updated), "wasTaught": device.taughtVector != nil])
+        sync.setTaughtVector(updated, deviceID: deviceID, roomID: room.id)
+    }
+
     private func handleTeach(_ ev: TeachCapture.Event) {
         guard teach.phase == .capturing, let deviceID = teach.deviceID else { return }
         switch ev {
@@ -884,7 +942,7 @@ final class ControlEngine: ObservableObject {
 
     private func handleGesture(_ g: DetectedGesture, target: UUID) {
         // Immediate "got it" tap; success/failure follows when HA answers.
-        WKInterfaceDevice.current().play(.directionUp)
+        WKInterfaceDevice.current().play(g.gesture == .flickDown ? .directionDown : .directionUp)
         if busy {
             queued = (g, target) // latest wins; run when the current call returns
             Diag.event("gesture_queued", ["type": g.gesture.rawValue, "device": device(target)?.name, "reason": "busy"])

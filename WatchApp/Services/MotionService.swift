@@ -36,6 +36,8 @@ struct MotionFrame: Sendable {
     var headingReady: Bool
     var source: HeadingSource
     var pointingSign: Double
+    /// Watch worn on the left wrist (rotate-and-hold maps palm up/down with it).
+    var wristIsLeft: Bool
 }
 
 /// Diagnostics / UI state, published on the main thread at ~12 Hz.
@@ -96,6 +98,7 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
         /// Yaw offset + readiness (compass anchoring / zero gesture), WatchMagicKit.
         var anchor = HeadingAnchor()
         var pointingSign = 1.0
+        var wristIsLeft = true
         /// Device +y ("12 o'clock") axis in the raw reference frame, last sample.
         var lastDeviceTop: Vector3?
         var lastAngularSpeed = 0.0
@@ -202,7 +205,7 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
         let wristLeft = device.wristLocation == .left
         let crownRight = device.crownOrientation == .right
         let sign = ForearmGeometry.pointingSign(wristIsLeft: wristLeft, crownIsRight: crownRight)
-        shared.withLock { $0.pointingSign = sign }
+        shared.withLock { $0.pointingSign = sign; $0.wristIsLeft = wristLeft }
         status.wristIsLeft = wristLeft
         status.crownIsRight = crownRight
         status.pointingSign = sign
@@ -271,7 +274,8 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
 
         snap.onSample?(MotionFrame(
             sample: sample, kinematics: kin, rawPointing: raw, pointing: pointing,
-            headingReady: snap.anchor.isAnchored, source: snap.source, pointingSign: snap.pointingSign
+            headingReady: snap.anchor.isAnchored, source: snap.source, pointingSign: snap.pointingSign,
+            wristIsLeft: snap.wristIsLeft
         ))
 
         // Rate measurement.

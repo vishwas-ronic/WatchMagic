@@ -112,6 +112,13 @@ The first launch of the watch app asks for Motion and Location (compass heading)
   gesture acted on by default. Real-wrist recordings showed flicks were no stronger than everyday movement, while
   twists were 15–19 rad/s every time. Flicks (up: on / brighter / faster; down: dimmer / slower / off) can be
   turned back on with `Settings.flicksEnabled`; there is no UI for it yet.
+- **Rotate and hold** (brightness / fan speed): while locked, slowly roll your forearm about 30° and hold it there.
+  Palm up = brighter / faster, palm down = dimmer / slower (off at the minimum). One step comes after 0.4 s, then
+  one every 0.6 s, with a tap each time, until you rotate back. Each step is the brightness step from Settings
+  (20 % by default). A fast snap is still the on/off twist.
+- **Aim learning:** each time a twist acts on a locked device, the watch moves that device's direction 35 % of the
+  way towards where you were actually pointing, and saves it as its taught direction (synced to the phone). It
+  ignores pointings more than 25° off. This also improves the room's compass correction for every other device.
 - Device control is on on every WatchMagic screen while the app is open, except while teaching or training.
 - If two devices are close together, both are shown — turn the Digital Crown to choose.
 - Drop the arm or move off target to unlock.

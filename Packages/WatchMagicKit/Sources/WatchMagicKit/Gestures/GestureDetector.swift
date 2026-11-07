@@ -11,8 +11,8 @@ public enum Gesture: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .flickUp: return "Flick up"
-        case .flickDown: return "Flick down"
+        case .flickUp: return "Up"
+        case .flickDown: return "Down"
         case .twist: return "Twist"
         }
     }
