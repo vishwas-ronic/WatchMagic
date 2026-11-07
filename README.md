@@ -107,6 +107,11 @@ The first launch of the watch app asks for Motion and Location (compass heading)
 
 ## 8. Using it
 
+- **Watch face / Smart Stack:** add the **WatchMagic** complication. Long-press the watch face → Edit → Complications,
+  or add it in the Smart Stack. One tap opens WatchMagic in listening mode and starts its background session.
+  Pointing and twisting then keep working for about an hour while the normal watch face is showing. A third-party
+  complication can't listen by itself: watchOS only runs the app's motion code during a session started from the app.
+
 - Raise your arm, point at a device and hold still ~0.3 s → light haptic, the device name and state appear (locked).
 - **Twist** (snap the forearm like turning a doorknob, and let it come back): toggle on/off. This is the only
   gesture acted on by default. Real-wrist recordings showed flicks were no stronger than everyday movement, while

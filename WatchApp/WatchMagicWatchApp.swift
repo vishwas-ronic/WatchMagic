@@ -114,6 +114,11 @@ struct RootView: View {
     var body: some View {
         NavigationStack(path: $services.path) {
             AimView()
+                // Watch-face complication / Smart Stack widget tap.
+                .onOpenURL { url in
+                    Diag.event("open_url", ["url": url.absoluteString])
+                    if url.scheme == "watchmagic" { services.startAiming() }
+                }
                 .navigationDestination(for: Route.self) { route in
                     switch route {
                     case .teach: TeachView()

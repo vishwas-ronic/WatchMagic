@@ -54,10 +54,14 @@ targets:
       - path: WatchApp
     dependencies:
       - package: WatchMagicKit
+      - target: WatchMagic Widgets
     info:
       path: WatchApp/Info.plist
       properties:
         CFBundleDisplayName: WatchMagic
+        CFBundleURLTypes:
+          - CFBundleURLName: ai.ronic.watchmagic.watchkitapp
+            CFBundleURLSchemes: [watchmagic]
         WKApplication: true
         WKCompanionAppBundleIdentifier: ai.ronic.watchmagic
         WKBackgroundModes: [physical-therapy]
@@ -69,6 +73,25 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.ronic.watchmagic.watchkitapp
         TARGETED_DEVICE_FAMILY: "4"
+
+  # Watch-face complication / Smart Stack widget: tap → watchmagic://aim.
+  WatchMagic Widgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: WatchWidgets
+    info:
+      path: WatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: WatchMagic
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.ronic.watchmagic.watchkitapp.widgets
+        TARGETED_DEVICE_FAMILY: "4"
+        SKIP_INSTALL: YES
 
 schemes:
   WatchMagic:
