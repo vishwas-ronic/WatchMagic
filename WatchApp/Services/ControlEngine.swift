@@ -343,7 +343,9 @@ final class ControlPipeline: @unchecked Sendable {
             else if trainer != nil { reason = "training" }
             else if !f.headingReady { reason = "heading not ready" }
             else if aimLock.lock == nil { reason = "not locked" }
-            else if !aimLock.isGestureWindowOpen(at: g.t) { reason = "window closed" }
+            // Twist acts whenever locked (it is strong enough on its own); the
+            // gesture window only gates flicks.
+            else if g.gesture != .twist && !aimLock.isGestureWindowOpen(at: g.t) { reason = "window closed" }
             else if g.gesture != .twist && !settings.flicksEnabled { reason = "flicks off" }
             else { reason = nil }
             let lock = aimLock.lock
@@ -356,7 +358,7 @@ final class ControlPipeline: @unchecked Sendable {
                 fields["lockAgeS"] = g.t - lock.lockedAt
                 fields["windowAgeS"] = g.t - lock.windowStart
             }
-            if reason == nil, let target = aimLock.target(forGestureAt: g.t) {
+            if reason == nil, let target = g.gesture == .twist ? aimLock.lockedID : aimLock.target(forGestureAt: g.t) {
                 aimLock.noteGesture(at: g.t)
                 snap.lastGestureActed = true
                 Diag.event("gesture", fields)
@@ -881,6 +883,8 @@ final class ControlEngine: ObservableObject {
     // MARK: - Actions
 
     private func handleGesture(_ g: DetectedGesture, target: UUID) {
+        // Immediate "got it" tap; success/failure follows when HA answers.
+        WKInterfaceDevice.current().play(.directionUp)
         if busy {
             queued = (g, target) // latest wins; run when the current call returns
             Diag.event("gesture_queued", ["type": g.gesture.rawValue, "device": device(target)?.name, "reason": "busy"])

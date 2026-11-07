@@ -60,3 +60,17 @@ final class RealWristTests: XCTestCase {
         XCTAssertEqual(events.first, .locked(id))
     }
 }
+
+extension RealWristTests {
+    /// Live use: one-way snaps whose return is slow/small still count, once.
+    func testTwistWithoutReturnFiresOnceAndSwallowsSlowReturn() {
+        var g = TraceGenerator.twist()
+        g.rollPulses = [Pulse(start: 1.0, duration: 0.2, amplitude: 14),
+                        Pulse(start: 1.2, duration: 0.6, amplitude: -3)]
+        XCTAssertEqual(GestureDetector.detectAll(g.generate(), pointingSign: 1, sensitivity: .high).map(\.gesture), [.twist])
+        // A strong return right after must not toggle a second time.
+        g.rollPulses = [Pulse(start: 1.0, duration: 0.18, amplitude: 15),
+                        Pulse(start: 1.18, duration: 0.3, amplitude: -12)]
+        XCTAssertEqual(GestureDetector.detectAll(g.generate(), pointingSign: 1, sensitivity: .high).map(\.gesture), [.twist])
+    }
+}

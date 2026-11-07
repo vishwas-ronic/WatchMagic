@@ -75,6 +75,8 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] User decision: **twist only** (toggle). Flicks ignored unless `Settings.flicksEnabled` (default off, no UI yet). Twist peak 5 → 12 rad/s (×0.75 high = 9), return ≥ 30 % (was 40 %; one real twist returned at 37 %). Replay: 11/11 real twists, 0 doubles, 1 twist-like motion in 60 s of everyday movement.
 - [x] Lock: tolerance 12° → 15° (v1 configs still on 12° migrated, config version 2), lock kept until tolerance + 8° (diag: Curtain Bulb locked at 11.3° and dropped at 13.6° while still), max pitch 60° → 75° (Meghna ceiling fan is at 62.6°, it could never lock).
 - [x] Device control stays on on every screen (was Aim screen only), except while teaching or training.
+- [x] Live test 1 (diag.log 10:27–10:29): twists worked (4 toggles, HA 270–580 ms) but only 4 of 13 strong roll bursts (12–16 rad/s, nearly pure roll) counted: 9 missed the return-within-0.5 s rule, 2 were rejected as "window closed". Fix: twist fires when the first lobe ends (`twistRequiresReturn` default off, return swallowed by debounce), twist ignores the gesture window (acts whenever locked), immediate `.directionUp` haptic on recognition. Replay unchanged: 11/11 real twists, no doubles, 1 twist-like motion in 60 s everyday.
+- [ ] Curtain Bulb locks 8.6–14.3° off its taught direction every time → its reference is ~10° off (taught in a different posture). Re-teach, or learn from confirmed toggles.
 - [ ] Meghna Room has two "Fan" entries (fan.meghna_fan_meghna_room_fan + switch.meghna_room_fan) 1.2° apart → always ambiguous; remove one.
 - [ ] Only Curtain Bulb has a taught vector; the room's compass offset rests on that one device. Teaching one more device would average the offset.
 

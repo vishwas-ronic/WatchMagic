@@ -47,10 +47,11 @@ public struct DetectedGesture: Equatable, Sendable {
 ///   lobe's sign decides up/down; the gesture is emitted when the lobe ends
 ///   (|pitchRate| < 50 % of the threshold, or the sign flips), so the return
 ///   movement that follows is swallowed by the debounce.
-/// - **Twist**: a roll-rate lobe with peak |rollRate| ≥ 12 rad/s and roll
-///   dominating pitch (≥ 1.5×), followed within 0.5 s (from the end of that
-///   lobe) by an opposite-sign roll ≥ 30 % of the first peak. Emitted when the
-///   return crosses that level.
+/// - **Twist**: a roll-rate lobe (≤ 0.4 s) with peak |rollRate| ≥ 12 rad/s and
+///   roll dominating pitch (≥ 1.5×). Emitted when the lobe ends; the return
+///   that follows falls in the debounce. With `twistRequiresReturn`, it must
+///   instead be followed within 0.5 s by an opposite-sign roll ≥ 30 % of the
+///   first peak, and is emitted when the return crosses that level.
 /// - **Debounce**: after a gesture, nothing is detected for 0.4 s AND until
 ///   the angular speed has dropped below 1.0 rad/s (quiet). A lobe that starts
 ///   during the refractory period is ignored entirely.
@@ -76,7 +77,12 @@ public final class GestureDetector {
         public var twistPeak: Double = 12.0
         /// Twist: peak roll must be ≥ this × peak pitch in the lobe.
         public var twistDominance: Double = 1.5
-        /// Return lobe must reach this fraction of the first peak.
+        /// Require the opposite-sign return before emitting a twist. Off: live use
+        /// on the Ultra showed many real twists (12–16 rad/s, nearly pure roll)
+        /// whose return was too slow or small; the twist now fires when the first
+        /// lobe ends and the return is swallowed by the debounce.
+        public var twistRequiresReturn: Bool = false
+        /// Return lobe must reach this fraction of the first peak (if required).
         /// 0.3: real returns measured 35–70 % of the first peak.
         public var twistReturnFraction: Double = 0.3
         /// …within this time after the first lobe ends, s.
@@ -201,7 +207,8 @@ public final class GestureDetector {
            ended.peak >= th.twistDominance * ended.peakOther {
             pendingTwist = (ended.sign, ended.peak, t)
             // The return may already be under way on this very sample.
-            if rr * ended.sign < 0, abs(rr) >= th.twistReturnFraction * ended.peak {
+            if !th.twistRequiresReturn
+                || (rr * ended.sign < 0 && abs(rr) >= th.twistReturnFraction * ended.peak) {
                 pendingTwist = nil
                 result = emit(.twist, peak: ended.peak, at: t)
             }
