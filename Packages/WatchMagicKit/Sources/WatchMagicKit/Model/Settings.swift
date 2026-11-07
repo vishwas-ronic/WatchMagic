@@ -41,16 +41,25 @@ public struct Settings: Codable, Equatable, Sendable {
     public var sensitivity: GestureSensitivity
     /// Flick down at the minimum brightness/speed turns the device off.
     public var flickDownAtMinimumTurnsOff: Bool
+    /// Act on flick up/down. Off by default: real-wrist data showed the
+    /// user's flicks are no stronger than everyday movement; twist (toggle)
+    /// is the only gesture acted on unless this is turned on.
+    public var flicksEnabled: Bool
+
+    /// Once locked, the lock is kept until the pointing is this many degrees
+    /// beyond `aimToleranceDeg` (hysteresis against compass jitter at the edge).
+    public static let lockKeepExtraDeg: Double = 8
 
     public init(
         brightnessStepPct: Double = 20,
         fanStepPct: Double? = nil,
-        aimToleranceDeg: Double = 12,
+        aimToleranceDeg: Double = 15,
         ambiguityMarginDeg: Double = 5,
         aimHoldMs: Double = 300,
         gestureWindowS: Double = 1.5,
         sensitivity: GestureSensitivity = .medium,
-        flickDownAtMinimumTurnsOff: Bool = true
+        flickDownAtMinimumTurnsOff: Bool = true,
+        flicksEnabled: Bool = false
     ) {
         self.brightnessStepPct = brightnessStepPct
         self.fanStepPct = fanStepPct
@@ -60,13 +69,14 @@ public struct Settings: Codable, Equatable, Sendable {
         self.gestureWindowS = gestureWindowS
         self.sensitivity = sensitivity
         self.flickDownAtMinimumTurnsOff = flickDownAtMinimumTurnsOff
+        self.flicksEnabled = flicksEnabled
     }
 
     public static let `default` = Settings()
 
     private enum CodingKeys: String, CodingKey {
         case brightnessStepPct, fanStepPct, aimToleranceDeg, ambiguityMarginDeg,
-             aimHoldMs, gestureWindowS, sensitivity, flickDownAtMinimumTurnsOff
+             aimHoldMs, gestureWindowS, sensitivity, flickDownAtMinimumTurnsOff, flicksEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -86,5 +96,6 @@ public struct Settings: Codable, Equatable, Sendable {
             sensitivity = d.sensitivity
         }
         flickDownAtMinimumTurnsOff = try c.decodeIfPresent(Bool.self, forKey: .flickDownAtMinimumTurnsOff) ?? d.flickDownAtMinimumTurnsOff
+        flicksEnabled = try c.decodeIfPresent(Bool.self, forKey: .flicksEnabled) ?? d.flicksEnabled
     }
 }

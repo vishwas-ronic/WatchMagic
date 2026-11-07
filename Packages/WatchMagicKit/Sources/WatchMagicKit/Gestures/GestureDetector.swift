@@ -47,9 +47,9 @@ public struct DetectedGesture: Equatable, Sendable {
 ///   lobe's sign decides up/down; the gesture is emitted when the lobe ends
 ///   (|pitchRate| < 50 % of the threshold, or the sign flips), so the return
 ///   movement that follows is swallowed by the debounce.
-/// - **Twist**: a roll-rate lobe with peak |rollRate| ≥ 5 rad/s and roll
+/// - **Twist**: a roll-rate lobe with peak |rollRate| ≥ 12 rad/s and roll
 ///   dominating pitch (≥ 1.5×), followed within 0.5 s (from the end of that
-///   lobe) by an opposite-sign roll ≥ 40 % of the first peak. Emitted when the
+///   lobe) by an opposite-sign roll ≥ 30 % of the first peak. Emitted when the
 ///   return crosses that level.
 /// - **Debounce**: after a gesture, nothing is detected for 0.4 s AND until
 ///   the angular speed has dropped below 1.0 rad/s (quiet). A lobe that starts
@@ -71,11 +71,14 @@ public final class GestureDetector {
         /// Flick lobes longer than this are not flicks, s.
         public var flickMaxLobeDuration: TimeInterval = 0.35
         /// Minimum peak |rollRate| for the first twist lobe, rad/s.
-        public var twistPeak: Double = 5.0
+        /// 12 (×0.75 high = 9): real twists measured 15–19 rad/s on the Ultra,
+        /// everyday movement produced twist-shaped lobes of 4–12 rad/s.
+        public var twistPeak: Double = 12.0
         /// Twist: peak roll must be ≥ this × peak pitch in the lobe.
         public var twistDominance: Double = 1.5
         /// Return lobe must reach this fraction of the first peak.
-        public var twistReturnFraction: Double = 0.4
+        /// 0.3: real returns measured 35–70 % of the first peak.
+        public var twistReturnFraction: Double = 0.3
         /// …within this time after the first lobe ends, s.
         public var twistReturnWindow: TimeInterval = 0.5
         /// Twist first lobes longer than this are not twists, s.

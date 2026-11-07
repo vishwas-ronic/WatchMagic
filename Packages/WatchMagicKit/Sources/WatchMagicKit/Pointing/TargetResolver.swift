@@ -62,10 +62,14 @@ public enum TargetResolver {
         return .ambiguous(ids)
     }
 
-    /// Convenience using `Settings` tolerances.
-    public static func resolve(pointing: Vector3, candidates: [TargetCandidate], settings: Settings) -> Resolution {
+    /// Convenience using `Settings` tolerances. With `keepingLock` (a lock is
+    /// held), the tolerance widens by `Settings.lockKeepExtraDeg` so jitter at
+    /// the edge doesn't drop it.
+    public static func resolve(pointing: Vector3, candidates: [TargetCandidate], settings: Settings,
+                               keepingLock: Bool = false) -> Resolution {
         resolve(pointing: pointing, candidates: candidates,
-                toleranceDeg: settings.aimToleranceDeg, marginDeg: settings.ambiguityMarginDeg)
+                toleranceDeg: settings.aimToleranceDeg + (keepingLock ? Settings.lockKeepExtraDeg : 0),
+                marginDeg: settings.ambiguityMarginDeg)
     }
 
     /// Zero-gesture helper: degrees to ADD to the measured yaw so that the

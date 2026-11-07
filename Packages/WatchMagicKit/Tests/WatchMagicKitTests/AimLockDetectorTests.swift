@@ -31,7 +31,7 @@ final class AimLockDetectorTests: XCTestCase {
         let d = AimLockDetector()
         XCTAssertEqual(feed(d, from: 0, duration: 1, speed: 1.0, .locked(id: a, angleDeg: 3)), [])   // not steady
         XCTAssertEqual(feed(d, from: 1, duration: 1, pitch: -50, .locked(id: a, angleDeg: 3)), [])   // arm down
-        XCTAssertEqual(feed(d, from: 2, duration: 1, pitch: 70, .locked(id: a, angleDeg: 3)), [])    // too high
+        XCTAssertEqual(feed(d, from: 2, duration: 1, pitch: 80, .locked(id: a, angleDeg: 3)), [])    // too high
         XCTAssertEqual(feed(d, from: 3, duration: 1, .none), [])
         // alternating targets never hold for 300 ms
         for i in 0..<10 {
@@ -108,7 +108,8 @@ final class ModelAndSyncTests: XCTestCase {
         XCTAssertEqual(cfg.haURL.absoluteString, "http://homeassistant.local:8123")
         XCTAssertEqual(cfg.settings.brightnessStepPct, 20)
         XCTAssertNil(cfg.settings.fanStepPct)
-        XCTAssertEqual(cfg.settings.aimToleranceDeg, 12)
+        XCTAssertEqual(cfg.settings.aimToleranceDeg, 15)
+        XCTAssertFalse(cfg.settings.flicksEnabled)
         XCTAssertEqual(cfg.settings.ambiguityMarginDeg, 5)
         XCTAssertEqual(cfg.settings.aimHoldMs, 300)
         XCTAssertEqual(cfg.settings.gestureWindowS, 1.5)

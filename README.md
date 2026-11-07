@@ -1,6 +1,6 @@
 # WatchMagic
 
-Point your Apple Watch Ultra at a light, fan or switch and flick to control it through Home Assistant.
+Point your Apple Watch Ultra at a light, fan or switch and twist your wrist to toggle it through Home Assistant.
 The iPhone app ("WatchMagic") connects to Home Assistant and holds all configuration; the watch app
 ("WatchMagic Watch App") does the aiming, gesture detection and service calls. See `SPEC.md` for the
 full behaviour and `TASKS.md` for the current checklist.
@@ -108,8 +108,11 @@ The first launch of the watch app asks for Motion and Location (compass heading)
 ## 8. Using it
 
 - Raise your arm, point at a device and hold still ~0.3 s → light haptic, the device name and state appear (locked).
-- **Flick up**: on / brighter / faster. **Flick down**: dimmer / slower / off at the minimum. **Twist** (roll the
-  forearm and back): toggle. Keep pointing and flick again to keep stepping.
+- **Twist** (snap the forearm like turning a doorknob, and let it come back): toggle on/off. This is the only
+  gesture acted on by default. Real-wrist recordings showed flicks were no stronger than everyday movement, while
+  twists were 15–19 rad/s every time. Flicks (up: on / brighter / faster; down: dimmer / slower / off) can be
+  turned back on with `Settings.flicksEnabled`; there is no UI for it yet.
+- Device control is on on every WatchMagic screen while the app is open, except while teaching or training.
 - If two devices are close together, both are shown — turn the Digital Crown to choose.
 - Drop the arm or move off target to unlock.
 

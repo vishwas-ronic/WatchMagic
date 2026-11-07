@@ -118,8 +118,10 @@ struct TraceGenerator {
     /// Pronation then return.
     static func twist(sign: Double = 1, t0: Double = 1.0, seed: UInt64 = 3) -> TraceGenerator {
         var g = TraceGenerator(sign: sign, seed: seed)
-        g.rollPulses = [Pulse(start: t0, duration: 0.12, amplitude: 8),
-                        Pulse(start: t0 + 0.12, duration: 0.16, amplitude: -6)]
+        // Shape measured on the Ultra (training recordings, Nov 2026): a ~16 rad/s
+        // roll lobe then a slower ~8 rad/s return.
+        g.rollPulses = [Pulse(start: t0, duration: 0.18, amplitude: 16),
+                        Pulse(start: t0 + 0.18, duration: 0.25, amplitude: -8)]
         g.pitchPulses = [Pulse(start: t0, duration: 0.12, amplitude: 0.8)]
         g.yawPulses = [Pulse(start: t0, duration: 0.2, amplitude: 0.4)]
         return g

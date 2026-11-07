@@ -309,7 +309,8 @@ final class ControlPipeline: @unchecked Sendable {
                 if nearest == nil || a < nearest!.angle { nearest = (c.id, a) }
             }
             if canAim {
-                resolution = TargetResolver.resolve(pointing: f.pointing, candidates: candidates, settings: settings)
+                resolution = TargetResolver.resolve(pointing: f.pointing, candidates: candidates, settings: settings,
+                                                     keepingLock: aimLock.isLocked)
             }
         }
         switch aimLock.update(time: t, pitchDeg: k.pitchDeg, angularSpeed: k.angularSpeed, resolution: resolution) {
@@ -343,6 +344,7 @@ final class ControlPipeline: @unchecked Sendable {
             else if !f.headingReady { reason = "heading not ready" }
             else if aimLock.lock == nil { reason = "not locked" }
             else if !aimLock.isGestureWindowOpen(at: g.t) { reason = "window closed" }
+            else if g.gesture != .twist && !settings.flicksEnabled { reason = "flicks off" }
             else { reason = nil }
             let lock = aimLock.lock
             var fields: [String: Any?] = [

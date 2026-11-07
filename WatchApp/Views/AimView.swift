@@ -44,9 +44,8 @@ struct AimView: View {
                 engine.setAimScreenVisible(true)
                 services.keepAlive()
             }
-            .onDisappear {
-                engine.setAimScreenVisible(false)
-            }
+            // No onDisappear: device control stays on on every WatchMagic screen
+            // (the pipeline itself pauses aiming while teaching or training).
     }
 
     // MARK: - Content

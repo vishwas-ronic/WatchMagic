@@ -1,0 +1,62 @@
+import XCTest
+@testable import WatchMagicKit
+
+/// Regression tests on real Apple Watch Ultra recordings (left wrist, crown
+/// right, 50 Hz) from the phone-guided training session, plus the lock /
+/// tolerance changes made from the same session's diagnostics.
+final class RealWristTests: XCTestCase {
+
+    private func fixture(_ name: String) throws -> [MotionSample] {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "csv", subdirectory: "Fixtures"))
+        return try MotionCSV.decode(String(contentsOf: url, encoding: .utf8))
+    }
+
+    func testRealTwistsAreAllDetected() throws {
+        let samples = try fixture("real_twist5")
+        for s in [GestureSensitivity.medium, .high] {
+            let g = GestureDetector.detectAll(samples, pointingSign: 1, sensitivity: s)
+            XCTAssertEqual(g.filter { $0.gesture == .twist }.count, 5, "@\(s): \(g.map(\.gesture))")
+        }
+    }
+
+    func testEverydayMovementProducesNoTwist() throws {
+        let samples = try fixture("real_everyday30s")
+        for s in [GestureSensitivity.low, .medium] {
+            let g = GestureDetector.detectAll(samples, pointingSign: 1, sensitivity: s)
+            XCTAssertEqual(g.filter { $0.gesture == .twist }.count, 0, "@\(s): \(g)")
+        }
+    }
+
+    func testLockKeepsWiderToleranceThanAcquire() {
+        let id = UUID()
+        // Pointing 20° off the device (rotate +x by 20° about z).
+        let a = 20.0 * .pi / 180
+        let pointing = Vector3(cos(a), sin(a), 0)
+        let c = [TargetCandidate(id: id, direction: Vector3(1, 0, 0))]
+        let s = Settings()
+        XCTAssertEqual(TargetResolver.resolve(pointing: pointing, candidates: c, settings: s), .none)
+        XCTAssertEqual(TargetResolver.resolve(pointing: pointing, candidates: c, settings: s, keepingLock: true).ids, [id])
+    }
+
+    func testV1ConfigOnOldDefaultToleranceIsMigrated() throws {
+        let v1 = #"{"version":1,"settings":{"aimToleranceDeg":12}}"#
+        let cfg = try AppConfig.fromJSON(Data(v1.utf8))
+        XCTAssertEqual(cfg.settings.aimToleranceDeg, 15)
+        XCTAssertEqual(cfg.version, AppConfig.currentVersion)
+        // A user-chosen value is kept.
+        let custom = try AppConfig.fromJSON(Data(#"{"version":1,"settings":{"aimToleranceDeg":20}}"#.utf8))
+        XCTAssertEqual(custom.settings.aimToleranceDeg, 20)
+    }
+
+    func testCeilingFanPitchCanLock() {
+        let id = UUID()
+        let d = AimLockDetector()
+        var events: [AimLockEvent] = []
+        var t = 0.0
+        while t < 0.5 {
+            if let e = d.update(time: t, pitchDeg: 63, angularSpeed: 0.1, resolution: .locked(id: id, angleDeg: 3)) { events.append(e) }
+            t += 0.02
+        }
+        XCTAssertEqual(events.first, .locked(id))
+    }
+}

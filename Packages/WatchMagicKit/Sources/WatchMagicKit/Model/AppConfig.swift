@@ -8,7 +8,8 @@ import Foundation
 /// e.g. for future automatic room detection. Bump `currentVersion` on
 /// incompatible changes.
 public struct AppConfig: Codable, Equatable, Sendable {
-    public static let currentVersion = 1
+    /// 2: aim tolerance default 12° → 15° (v1 configs still on 12° are migrated).
+    public static let currentVersion = 2
     public static let defaultHAURL = URL(string: "http://homeassistant.local:8123")!
 
     public var version: Int
@@ -89,6 +90,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
         devices = try c.decodeIfPresent([ControlledDevice].self, forKey: .devices) ?? []
         currentRoomID = try c.decodeIfPresent(UUID.self, forKey: .currentRoomID)
         settings = try c.decodeIfPresent(Settings.self, forKey: .settings) ?? Settings()
+        if version < 2 {
+            // v1's default tolerance proved too tight for the watch compass on a real wrist.
+            if settings.aimToleranceDeg == 12 { settings.aimToleranceDeg = Settings().aimToleranceDeg }
+            version = 2
+        }
     }
 
     public func encode(to encoder: Encoder) throws {

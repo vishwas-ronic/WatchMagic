@@ -70,6 +70,14 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [ ] house.json polygons are inner wall faces ±0.1–0.2 m and corners are drawn chamfered (collapsed in `PlanPolygon.corners`), so a fit error of ~0.1–0.2 m is expected even with good marks.
 - [ ] URLSession from this Mac's CLI processes can't reach LAN hosts (macOS Local Network privacy) while curl can — the opt-in live HA test in `swift test` can't run from the terminal.
 
+## 5b. Real-wrist tuning (2026-11-07, from the phone-guided training session + watch diag.log)
+- [x] Training data: flicks peaked 2–5 rad/s (5/20 barely registered), everyday movement > 3 rad/s 17 % of the time, twists 15–19 rad/s every time. A Create ML activity classifier trained on it missed all held-out flicks and fired on 4/15 everyday clips, so it was not shipped (pipeline kept in the session scratchpad).
+- [x] User decision: **twist only** (toggle). Flicks ignored unless `Settings.flicksEnabled` (default off, no UI yet). Twist peak 5 → 12 rad/s (×0.75 high = 9), return ≥ 30 % (was 40 %; one real twist returned at 37 %). Replay: 11/11 real twists, 0 doubles, 1 twist-like motion in 60 s of everyday movement.
+- [x] Lock: tolerance 12° → 15° (v1 configs still on 12° migrated, config version 2), lock kept until tolerance + 8° (diag: Curtain Bulb locked at 11.3° and dropped at 13.6° while still), max pitch 60° → 75° (Meghna ceiling fan is at 62.6°, it could never lock).
+- [x] Device control stays on on every screen (was Aim screen only), except while teaching or training.
+- [ ] Meghna Room has two "Fan" entries (fan.meghna_fan_meghna_room_fan + switch.meghna_room_fan) 1.2° apart → always ambiguous; remove one.
+- [ ] Only Curtain Bulb has a taught vector; the room's compass offset rests on that one device. Teaching one more device would average the offset.
+
 ## 6. House 3D model integration (agreed with the house3d agent, 2026-11-07)
 - Read: `GET /local/house3d/house.json` (schema 1.1, metres; frame x = plan right, y = plan down, z up → **left-handed**, needs a reflection from our room frame). Rooms map by `space_id` (`ha_area_id` is null for now). Align on `spaces[].poly`, never `poly_render`.
 - Write: `POST /api/states/sensor.watchmagic_layout` {state: ISO time, attributes: {schema "watchmagic-layout/1", devices[], seats[], north_bearing_deg}} → HA automation merges into `/config/www/house3d/devices.json` (by entity_id / seat id; `delete: true` removes; one invalid item rejects the post).

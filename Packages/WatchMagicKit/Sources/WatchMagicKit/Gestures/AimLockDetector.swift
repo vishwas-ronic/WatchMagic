@@ -26,7 +26,7 @@ public struct AimLock: Equatable, Sendable {
 
 /// Decides when the user is aiming at a target (spec 1.2.3 "Lock").
 ///
-/// - **Acquire**: pointing pitch ∈ [−30°, +60°], angular speed < 0.6 rad/s
+/// - **Acquire**: pointing pitch ∈ [−30°, +75°], angular speed < 0.6 rad/s
 ///   (steady), and the same resolution (same device, or the same ambiguous set)
 ///   continuously for `aimHold` (300 ms default).
 /// - **Keep**: gesture spikes never drop the lock. The lock ends only if
@@ -46,7 +46,8 @@ public final class AimLockDetector {
         public var aimHold: TimeInterval = 0.3
         public var gestureWindow: TimeInterval = 1.5
         public var minPitchDeg: Double = -30
-        public var maxPitchDeg: Double = 60
+        /// 75°: ceiling fans above the seat sit at ~60–65°.
+        public var maxPitchDeg: Double = 75
         /// Angular speed below which the arm counts as steady, rad/s.
         public var steadySpeed: Double = 0.6
         /// Pitch below which the arm counts as dropped, deg.
