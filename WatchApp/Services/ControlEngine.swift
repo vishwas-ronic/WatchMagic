@@ -414,8 +414,9 @@ final class ControlPipeline: @unchecked Sendable {
             if reason == nil, let target = g.gesture == .twist ? aimLock.lockedID : aimLock.target(forGestureAt: g.t) {
                 aimLock.noteGesture(at: g.t)
                 if g.gesture == .twist {
-                    // Re-take the knob baseline once steady (a wrist left rotated after a snap must not step).
-                    knob.reset()
+                    // Rotate-and-hold stays off until the wrist is back where it aimed
+                    // (neither a wrist left rotated nor the way back may step).
+                    knob.awaitReturn()
                     // Aim learning: once per lock, unambiguous locks only.
                     if !learnedThisLock, aimLock.lock?.isAmbiguous == false, let observed = lockPointing.mean,
                        let reference = candidates.first(where: { $0.id == target })?.direction {

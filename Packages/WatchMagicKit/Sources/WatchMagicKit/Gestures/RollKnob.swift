@@ -14,9 +14,10 @@ import Foundation
 /// way). Verified against the integrated gyro roll on real Ultra twists.
 ///
 /// A fast snap (the on/off twist) passes through these angles too fast to
-/// engage (`maxEngageSpeed`). After a twist, call `reset()`: the baseline is
-/// re-taken once the arm is steady again, so a wrist left rotated after a
-/// snap doesn't start stepping.
+/// engage (`maxEngageSpeed`). After a twist, call `awaitReturn()`: the
+/// baseline (the pose you aimed with) is kept, and the knob can't engage until
+/// the wrist has come back near it. A wrist left rotated after a snap doesn't
+/// step, and neither does the wrist coming back from it.
 public struct RollKnob: Sendable {
 
     public struct Configuration: Equatable, Sendable {
@@ -62,6 +63,8 @@ public struct RollKnob: Sendable {
     private var settledSince: TimeInterval?
     private var pastSince: TimeInterval?
     private var nextStepAt: TimeInterval = 0
+    /// After a twist: no engaging until the roll is back within `releaseDeg`.
+    public private(set) var awaitingReturn = false
 
     public init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
@@ -74,6 +77,17 @@ public struct RollKnob: Sendable {
         pastSince = nil
         angleDeg = nil
         isEngaged = false
+        awaitingReturn = false
+    }
+
+    /// Call after a twist. Keeps the baseline; the knob stays off until the
+    /// wrist returns near it. (Live log 15:48: re-taking the baseline while the
+    /// wrist was still twisted made the return look like a 40–55° hold, and the
+    /// fan was switched back on ~2 s after each twist turned it off.)
+    public mutating func awaitReturn() {
+        pastSince = nil
+        isEngaged = false
+        if baseline != nil { awaitingReturn = true } else { settledSince = nil }
     }
 
     /// Take the baseline from this sample right away (e.g. at lock, which already required a steady arm).
@@ -112,6 +126,10 @@ public struct RollKnob: Sendable {
         // Right arm: supination = +roll about p (clockwise seen from the elbow); left arm mirrored.
         let up = wristIsLeft ? -roll : roll
 
+        if awaitingReturn {
+            if abs(roll) < c.releaseDeg { awaitingReturn = false }
+            return nil
+        }
         if isEngaged {
             if abs(roll) < c.releaseDeg || abs(roll) > c.maxEngageDeg { return disengage(at: t) }
             if t >= nextStepAt, angularSpeed < c.maxEngageSpeed {

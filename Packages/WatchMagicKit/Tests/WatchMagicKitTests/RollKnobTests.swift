@@ -132,3 +132,22 @@ extension RollKnobTests {
         XCTAssertEqual(steps, 0)
     }
 }
+
+extension RollKnobTests {
+    /// Live log 15:48: twist turned the fan off, then the wrist coming back
+    /// (baseline re-taken while still twisted) stepped "up" and turned it on.
+    func testAfterATwistNeitherStayingRotatedNorComingBackSteps() {
+        var k = RollKnob()
+        k.setBaseline(gravity: gravity(rolledBy: 0), pointingSign: 1)
+        k.awaitReturn()
+        // Wrist left rotated 50° for 2 s: no steps.
+        XCTAssertTrue(run(&k, wristIsLeft: true, duration: 2) { _ in 50 }.isEmpty)
+        XCTAssertTrue(k.awaitingReturn)
+        // Coming back to neutral and resting: no steps, re-armed.
+        XCTAssertTrue(run(&k, wristIsLeft: true, from: 2, duration: 1) { _ in 3 }.isEmpty)
+        XCTAssertFalse(k.awaitingReturn)
+        // A deliberate rotate-and-hold afterwards still works.
+        let ev = run(&k, wristIsLeft: true, from: 3, duration: 0.6) { _ in -40 }
+        XCTAssertEqual(ev.first?.1, .step(1))
+    }
+}
