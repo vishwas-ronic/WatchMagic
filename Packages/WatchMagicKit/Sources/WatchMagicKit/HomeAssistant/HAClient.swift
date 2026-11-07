@@ -20,7 +20,22 @@ public struct HAClient: Sendable {
     public static let areasTemplate =
         #"[{% for a in areas() %}{"id":"{{a}}","name":{{ area_name(a)|tojson }},"entities":{{ area_entities(a)|select("match","^(light|fan|switch)\\.")|list|tojson }}}{% if not loop.last %},{% endif %}{% endfor %}]"#
 
-    public init(baseURL: URL, token: String, session: URLSession = .shared, timeout: TimeInterval = 3) {
+    /// Ephemeral session: no disk URL cache, no cookie store, no credential
+    /// storage — so neither responses nor the `Authorization` header ever land
+    /// in `Cache.db` inside the app container (spec 1.1.1 / 2.2 Keychain check).
+    public static func makeSession() -> URLSession {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.urlCache = nil
+        cfg.httpCookieStorage = nil
+        cfg.urlCredentialStorage = nil
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }
+
+    public static let defaultSession = makeSession()
+
+    public init(baseURL: URL, token: String, session: URLSession = HAClient.defaultSession, timeout: TimeInterval = 3) {
         self.baseURL = baseURL
         self.token = token
         self.session = session

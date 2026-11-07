@@ -16,9 +16,11 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] Pointing: Vector3, ForearmGeometry, ReferenceDirections, TargetResolver
 - [x] Gestures: MotionSample/CSV, AimLockDetector, GestureDetector
 - [x] Sync: SyncPayload
-- [x] Tests: ActionMapper, TargetResolver, GestureDetector (synthetic CSV fixtures), HAClient, AimLock, model/sync → `swift test` green
-- [ ] Move teach averaging, zero-gesture rule, compass-anchor math from the watch app into the Kit + tests (spec 3.3) — in progress
-- [ ] Relay entity-state fetch through the phone (watch can't show state on lock when HA is only reachable via the phone) — in progress
+- [x] Tests: ActionMapper, TargetResolver, GestureDetector (synthetic CSV fixtures), HAClient, AimLock, model/sync, teach/zero/heading → `swift test` 104 tests, 0 failures (2 opt-in skips)
+- [x] Move teach averaging, zero-gesture rule, compass-anchor math, trace recorder from the watch app into the Kit + tests (spec 3.3)
+- [x] Relay entity-state fetch through the phone (`relayStateRequest`)
+- [x] Phone relay accepts only the exact services ActionMapper emits (`RelayRequest.isAllowed`, tested)
+- [x] HAClient defaults to an ephemeral, cache-free URLSession so the bearer header never lands in `Cache.db` (iOS app used `.shared`)
 - [ ] Replace synthetic gesture fixtures with real Ultra traces (Sensor Probe → Record) and retune thresholds
 
 ## 2. iOS app
