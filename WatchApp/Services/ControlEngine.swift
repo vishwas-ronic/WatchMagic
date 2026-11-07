@@ -100,6 +100,8 @@ final class ControlPipeline: @unchecked Sendable {
     /// Mean pointing while steady on the current lock (aim learning).
     private var lockPointing = PointingAverage()
     private var learnedThisLock = false
+    /// Forearm pitch while last steady on the lock (twists far from it are arm movement).
+    private var aimPitch: Double?
     /// Devices rotate-and-hold can step (dimmable lights, fans).
     private var adjustableIDs: Set<UUID> = []
     /// Phone-guided gesture-training recording in progress.
@@ -331,6 +333,7 @@ final class ControlPipeline: @unchecked Sendable {
             lockPointing.reset()
             lockPointing.add(f.pointing)
             learnedThisLock = false
+            aimPitch = k.pitchDeg
             Diag.event("lock", ["device": names[id], "candidates": aimLock.lock?.candidates.count,
                                 "angleDeg": angle(to: id, f.pointing), "pitchDeg": k.pitchDeg,
                                 "speed": k.angularSpeed])
@@ -350,7 +353,10 @@ final class ControlPipeline: @unchecked Sendable {
 
         // Rotate and hold (brightness / fan speed) while locked.
         if canAim, let lock = aimLock.lock {
-            if k.angularSpeed < 0.6, !knob.isEngaged { lockPointing.add(f.pointing) }
+            if k.angularSpeed < 0.6, !knob.isEngaged {
+                lockPointing.add(f.pointing)
+                if resolution.ids.contains(lock.selectedID) { aimPitch = k.pitchDeg }
+            }
             // Only for devices with levels, and only while still pointing at it
             // (a knob step must not keep a lock alive while the arm drops).
             let adjustable = adjustableIDs.contains(lock.selectedID)
@@ -386,6 +392,10 @@ final class ControlPipeline: @unchecked Sendable {
             else if aimLock.lock == nil { reason = "not locked" }
             // Rotating back from a rotate-and-hold must not toggle.
             else if knob.isActive(at: g.t, within: 0.8) { reason = "knob active" }
+            // One twist per aim: hold still on the device again before the next.
+            else if g.gesture == .twist && !aimLock.twistArmed { reason = "not re-aimed" }
+            // The arm moved away (e.g. coming down) — not a twist at the device.
+            else if g.gesture == .twist, let p0 = aimPitch, abs(k.pitchDeg - p0) > 25 { reason = "arm moved" }
             // Twist acts whenever locked (it is strong enough on its own); the
             // gesture window only gates flicks.
             else if g.gesture != .twist && !aimLock.isGestureWindowOpen(at: g.t) { reason = "window closed" }

@@ -74,3 +74,32 @@ extension RealWristTests {
         XCTAssertEqual(GestureDetector.detectAll(g.generate(), pointingSign: 1, sensitivity: .high).map(\.gesture), [.twist])
     }
 }
+
+extension RealWristTests {
+    /// Live log 11:43:24–25: twist toggled, the arm coming down 0.8 s later was
+    /// a second "twist". After an acted gesture the twist must be re-armed by
+    /// holding steady on the target again.
+    func testTwistNeedsReAimAfterAGesture() {
+        let id = UUID()
+        let d = AimLockDetector()
+        var t = 0.0
+        func step(_ speed: Double, _ pitch: Double = 10, onTarget: Bool = true) {
+            d.update(time: t, pitchDeg: pitch, angularSpeed: speed,
+                     resolution: onTarget ? .locked(id: id, angleDeg: 3) : .none)
+            t += 0.02
+        }
+        while t < 0.4 { step(0.1) }
+        XCTAssertTrue(d.isLocked)
+        XCTAssertTrue(d.twistArmed)
+        d.noteGesture(at: t)
+        XCTAssertFalse(d.twistArmed)
+        // Arm moving (fast) for 0.5 s: still not armed.
+        let end = t + 0.5
+        while t < end { step(3.0, -20) }
+        XCTAssertFalse(d.twistArmed)
+        // Steady on target again for 0.35 s: armed.
+        let end2 = t + 0.35
+        while t < end2 { step(0.1) }
+        XCTAssertTrue(d.twistArmed)
+    }
+}

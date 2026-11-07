@@ -74,6 +74,11 @@ public final class AimLockDetector {
 
     public var configuration: Configuration
     public private(set) var lock: AimLock?
+    /// One twist per aim: true on lock; false after a gesture is acted on;
+    /// true again only after holding steady on the target for `aimHold`.
+    /// (Live log: the arm coming down right after a twist was a second "twist"
+    /// that toggled the light back.)
+    public private(set) var twistArmed = false
 
     // Acquisition
     private var pendingKey: Set<UUID>?
@@ -110,6 +115,7 @@ public final class AimLockDetector {
         lastUpdate = nil
         lastGestureAt = -.infinity
         steadyOnTargetSince = nil
+        twistArmed = false
     }
 
     /// Feed one motion update.
@@ -149,12 +155,15 @@ public final class AimLockDetector {
                 }
             }
 
-            // Re-arm the gesture window by holding steady on target again.
+            // Re-arm the gesture window (and the twist) by holding steady on target again.
             if onTarget && steady && raised {
                 if steadyOnTargetSince == nil { steadyOnTargetSince = t }
-                if t - steadyOnTargetSince! >= c.aimHold, !isGestureWindowOpen(at: t) {
-                    l.windowStart = t
-                    lock = l
+                if t - steadyOnTargetSince! >= c.aimHold {
+                    twistArmed = true
+                    if !isGestureWindowOpen(at: t) {
+                        l.windowStart = t
+                        lock = l
+                    }
                 }
             } else {
                 steadyOnTargetSince = nil
@@ -181,6 +190,7 @@ public final class AimLockDetector {
             offTargetSince = nil
             offTargetSteadyTime = 0
             steadyOnTargetSince = t
+            twistArmed = true
             return .locked(l.selectedID)
         }
         return nil
@@ -190,6 +200,8 @@ public final class AimLockDetector {
     /// and reopens the gesture window.
     public func noteGesture(at t: TimeInterval) {
         lastGestureAt = t
+        twistArmed = false
+        steadyOnTargetSince = nil
         guard var l = lock else { return }
         l.windowStart = t
         lock = l
