@@ -40,7 +40,7 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] `swift test` passes
 - [x] xcodebuild iOS (with embedded watch app) + watchOS: zero errors, zero warnings from our sources
 - [x] Deployed to iPhone (signed build, installed + launched via devicectl)
-- [ ] Deployed to Ultra — **BLOCKED (on user):** Developer Mode is off on the watch (`kAMDMobileImageMounterDiskImageRestricted`)
+- [x] Deployed to Ultra (watch registered to the team via `-allowProvisioningDeviceRegistration`; installed + launched via devicectl); iPhone app rebuilt so its embedded watch app carries the same profile
 - [x] README written; [ ] Sensor Probe findings table still to be filled from the device
 - [~] 2.2 iPhone on-device checks (Test success / 401, import, persistence, Keychain grep, room change → watch ≤ 5 s)
 - [~] 2.3 watch on-device checks: reference frames/heading source, rotation convention, crown-axis assumption,

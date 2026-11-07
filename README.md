@@ -78,6 +78,12 @@ xcrun devicectl device install app --device <iPhone-id> "build/Build/Products/De
 xcrun devicectl device install app --device <watch-id> "build/Build/Products/Debug-watchos/WatchMagic Watch App.app"
 ```
 
+If the watch install fails with "This provisioning profile cannot be installed on this device", the watch isn't
+registered with the team yet: build the watch scheme once with `-destination 'id=<watch-id>'
+-allowProvisioningUpdates -allowProvisioningDeviceRegistration`, then install again. The watch needs Developer Mode
+(Settings → Privacy & Security); the switch only appears after Xcode has prepared the watch — plug the iPhone into the
+Mac and open Xcode → Window → Devices and Simulators with the watch awake.
+
 (Or simply Run the `WatchMagic` scheme on the iPhone from Xcode; the watch app is embedded and installs with it.)
 The first launch of the watch app asks for Motion and Location (compass heading) permission — allow both.
 
