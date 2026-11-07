@@ -7,7 +7,7 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] XcodeGen installed (2.46.0)
 - [x] HA reachable with token: `GET /api/` → 200, bad token → 401, areas template works (curl from the Mac)
 - [x] Signing team found in Xcode prefs/profiles: G93232N59R; iPhone 16 Pro Max + Apple Watch Ultra paired & `available`
-- [ ] **BLOCKED (on user):** no Apple ID signed in to Xcode → automatic signing can't create profiles for `ai.ronic.watchmagic(.watchkitapp)` → no device install
+- [x] Apple ID signed in to Xcode (2026-11-07); automatic signing created profiles for `ai.ronic.watchmagic` + `.watchkitapp`
 - [x] `.gitignore`, `project.yml`, `README.md`
 
 ## 1. WatchMagicKit (shared package, pure logic)
@@ -39,7 +39,8 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 - [x] `xcodegen generate` clean
 - [x] `swift test` passes
 - [x] xcodebuild iOS (with embedded watch app) + watchOS: zero errors, zero warnings from our sources
-- [ ] Deployed to iPhone + Ultra via devicectl — blocked on signing (see §0)
+- [x] Deployed to iPhone (signed build, installed + launched via devicectl)
+- [ ] Deployed to Ultra — **BLOCKED (on user):** Developer Mode is off on the watch (`kAMDMobileImageMounterDiskImageRestricted`)
 - [x] README written; [ ] Sensor Probe findings table still to be filled from the device
 - [~] 2.2 iPhone on-device checks (Test success / 401, import, persistence, Keychain grep, room change → watch ≤ 5 s)
 - [~] 2.3 watch on-device checks: reference frames/heading source, rotation convention, crown-axis assumption,
