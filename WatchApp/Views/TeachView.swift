@@ -5,6 +5,7 @@ import WatchMagicKit
 struct TeachView: View {
     @EnvironmentObject private var engine: ControlEngine
     @EnvironmentObject private var sync: WatchSyncService
+    @EnvironmentObject private var services: AppServices
 
     var body: some View {
         List {
@@ -39,6 +40,7 @@ struct TeachView: View {
             }
         }
         .navigationTitle("Teach")
+        .onAppear { services.keepAlive() }
     }
 
     private func statusText(_ device: ControlledDevice) -> String {
@@ -60,6 +62,7 @@ struct TeachDeviceView: View {
 
     @EnvironmentObject private var engine: ControlEngine
     @EnvironmentObject private var sync: WatchSyncService
+    @EnvironmentObject private var services: AppServices
 
     var body: some View {
         let device = engine.device(deviceID)
@@ -96,6 +99,7 @@ struct TeachDeviceView: View {
             }
         }
         .navigationTitle("Teach")
+        .onAppear { services.keepAlive() }
         .onDisappear {
             if engine.teach.phase == .capturing { engine.cancelTeach() }
         }

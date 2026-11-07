@@ -7,6 +7,7 @@ struct AimView: View {
     @EnvironmentObject private var engine: ControlEngine
     @EnvironmentObject private var runtime: RuntimeSession
     @EnvironmentObject private var motion: MotionService
+    @EnvironmentObject private var services: AppServices
 
     @State private var crown = 0.0
     @State private var lastDetent = 0
@@ -41,7 +42,7 @@ struct AimView: View {
             }
             .onAppear {
                 engine.setAimScreenVisible(true)
-                runtime.start()
+                services.keepAlive()
             }
             .onDisappear {
                 engine.setAimScreenVisible(false)

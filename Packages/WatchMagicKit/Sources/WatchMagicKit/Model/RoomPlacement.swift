@@ -13,6 +13,12 @@ import Foundation
 ///   every other device in the room has its coordinates CLEARED, because they
 ///   belong to an old frame and would point the wrong way.
 /// Taught vectors are world-frame and never touched.
+///
+/// The house alignment (room frame → HA house frame) follows the same rule:
+/// it is only valid in the frame it was marked in. Same frame: a newly marked
+/// alignment replaces the stored one, otherwise it is kept. Fresh frame: the
+/// room gets this session's alignment, or none (the old one is cleared).
+/// Placed devices get `coordinatesSource = .lidar` and their surface mount.
 public struct RoomPlacement: Equatable, Sendable {
     public var roomID: UUID
     /// Seat set in this session (room frame), if any.
@@ -21,12 +27,31 @@ public struct RoomPlacement: Equatable, Sendable {
     public var devicePositions: [UUID: Vector3]
     /// True if the session's frame is the frame of the room's stored coordinates.
     public var sameFrame: Bool
+    /// Alignment to the house model marked in this session, if any.
+    public var houseAlignment: HouseAlignment?
+    /// Device ID → mount surface, for devices placed in this session.
+    public var deviceMounts: [UUID: DeviceMount]
 
-    public init(roomID: UUID, seat: Vector3?, devicePositions: [UUID: Vector3], sameFrame: Bool) {
+    public init(roomID: UUID, seat: Vector3?, devicePositions: [UUID: Vector3], sameFrame: Bool,
+                houseAlignment: HouseAlignment? = nil, deviceMounts: [UUID: DeviceMount] = [:]) {
         self.roomID = roomID
         self.seat = seat
         self.devicePositions = devicePositions
         self.sameFrame = sameFrame
+        self.houseAlignment = houseAlignment
+        self.deviceMounts = deviceMounts
+    }
+
+    /// True if saving clears a stored house alignment (fresh frame, none marked now).
+    public func clearsHouseAlignment(in config: AppConfig) -> Bool {
+        guard !sameFrame, houseAlignment == nil, let room = config.room(id: roomID) else { return false }
+        return room.houseAlignment != nil
+    }
+
+    /// The house alignment the room will have after saving.
+    public func resultingHouseAlignment(in config: AppConfig) -> HouseAlignment? {
+        if let houseAlignment { return houseAlignment }
+        return sameFrame ? config.room(id: roomID)?.houseAlignment : nil
     }
 
     /// Devices in the room whose existing coordinates will be cleared on save
@@ -57,13 +82,18 @@ public struct RoomPlacement: Equatable, Sendable {
               let newSeat = resultingSeat(in: config) else { return false }
         let roomDeviceIDs = Set(config.rooms[ri].deviceIDs)
         let stale = Set(staleDeviceIDs(in: config))
+        let alignment = resultingHouseAlignment(in: config)
         config.rooms[ri].seat = newSeat
+        config.rooms[ri].houseAlignment = alignment
         for i in config.devices.indices where roomDeviceIDs.contains(config.devices[i].id) {
             let id = config.devices[i].id
             if let p = devicePositions[id] {
                 config.devices[i].coordinates = p
+                config.devices[i].coordinatesSource = .lidar
+                if let m = deviceMounts[id] { config.devices[i].mount = m }
             } else if stale.contains(id) {
                 config.devices[i].coordinates = nil
+                config.devices[i].coordinatesSource = nil
             }
         }
         return true

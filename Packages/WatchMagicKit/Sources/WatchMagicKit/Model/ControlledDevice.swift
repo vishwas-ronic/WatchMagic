@@ -33,6 +33,38 @@ public enum DeviceKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// How a device is mounted (sent to HA's 3D view). Set by camera placement
+/// from the surface hit; see `classify(normal:heightAboveFloor:)`.
+public enum DeviceMount: String, Codable, CaseIterable, Sendable {
+    case wall, ceiling, floor, table
+
+    /// Height above the floor (m) below which an up-facing surface counts as the floor.
+    public static let floorMaxHeight = 0.3
+
+    /// Classifies a surface by its unit normal (room frame, +z up): facing
+    /// down (z ≤ −0.6) → ceiling; facing up (z ≥ 0.6) → floor if less than
+    /// `floorMaxHeight` above the floor, else table (unknown height → table);
+    /// otherwise (roughly horizontal normal) → wall.
+    public static func classify(normal: Vector3, heightAboveFloor: Double?) -> DeviceMount {
+        let n = normal.normalized
+        if n.isZero { return .wall }
+        if n.z <= -0.6 { return .ceiling }
+        if n.z >= 0.6 {
+            guard let h = heightAboveFloor else { return .table }
+            return h < floorMaxHeight ? .floor : .table
+        }
+        return .wall
+    }
+}
+
+/// Where a device's coordinates came from.
+public enum CoordinatesSource: String, Codable, Sendable {
+    /// Camera (LiDAR) placement.
+    case lidar
+    /// Typed in.
+    case manual
+}
+
 /// Calibration status shown on the phone.
 public enum CalibrationStatus: String, Codable, Sendable {
     /// Has a vector taught on the watch ("Taught ✓").
@@ -64,6 +96,10 @@ public struct ControlledDevice: Codable, Equatable, Hashable, Identifiable, Send
     public var coordinates: Vector3?
     /// Unit pointing vector (world frame) taught on the watch from the seat.
     public var taughtVector: Vector3?
+    /// Mount surface (from camera placement); nil = unknown.
+    public var mount: DeviceMount?
+    /// Where `coordinates` came from; nil = unknown (treated as manual).
+    public var coordinatesSource: CoordinatesSource?
 
     public init(
         id: UUID = UUID(),
@@ -72,7 +108,9 @@ public struct ControlledDevice: Codable, Equatable, Hashable, Identifiable, Send
         kind: DeviceKind,
         kindOverridden: Bool = false,
         coordinates: Vector3? = nil,
-        taughtVector: Vector3? = nil
+        taughtVector: Vector3? = nil,
+        mount: DeviceMount? = nil,
+        coordinatesSource: CoordinatesSource? = nil
     ) {
         self.id = id
         self.entityID = entityID
@@ -81,6 +119,8 @@ public struct ControlledDevice: Codable, Equatable, Hashable, Identifiable, Send
         self.kindOverridden = kindOverridden
         self.coordinates = coordinates
         self.taughtVector = taughtVector
+        self.mount = mount
+        self.coordinatesSource = coordinatesSource
     }
 
     /// The entity's domain ("light", "fan", "switch").
@@ -98,7 +138,7 @@ public struct ControlledDevice: Codable, Equatable, Hashable, Identifiable, Send
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, entityID, name, kind, kindOverridden, coordinates, taughtVector
+        case id, entityID, name, kind, kindOverridden, coordinates, taughtVector, mount, coordinatesSource
     }
 
     public init(from decoder: Decoder) throws {
@@ -114,5 +154,8 @@ public struct ControlledDevice: Codable, Equatable, Hashable, Identifiable, Send
         kindOverridden = try c.decodeIfPresent(Bool.self, forKey: .kindOverridden) ?? false
         coordinates = try c.decodeIfPresent(Vector3.self, forKey: .coordinates)
         taughtVector = try c.decodeIfPresent(Vector3.self, forKey: .taughtVector)
+        mount = (try? c.decodeIfPresent(String.self, forKey: .mount)).flatMap(DeviceMount.init(rawValue:))
+        coordinatesSource = (try? c.decodeIfPresent(String.self, forKey: .coordinatesSource))
+            .flatMap(CoordinatesSource.init(rawValue:))
     }
 }

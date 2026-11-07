@@ -4,6 +4,7 @@ import WatchMagicKit
 struct RoomDetailView: View {
     let roomID: UUID
     @EnvironmentObject private var store: ConfigStore
+    @EnvironmentObject private var house: HouseService
 
     @State private var name = ""
     @State private var didLoad = false
@@ -35,13 +36,14 @@ struct RoomDetailView: View {
             if let room {
                 PlacementView(roomID: room.id, devices: store.config.devices(in: room), existingSeat: room.seat)
                     .environmentObject(store)
+                    .environmentObject(house)
             }
         }
     }
 
     private func form(_ room: Room) -> some View {
         let devices = store.config.devices(in: room)
-        let refs = ReferenceDirections(room: room, devices: devices)
+        let refs = ReferenceDirections(room: room, config: store.config)
         let isCurrent = store.config.currentRoomID == room.id
 
         return Form {
@@ -82,6 +84,8 @@ struct RoomDetailView: View {
                 }
                 alignmentCard(room: room, devices: devices, refs: refs)
             }
+
+            HouseRoomSection(room: room)
 
             Section {
                 OptionalVectorField(value: room.seat) { v in
@@ -139,7 +143,7 @@ struct RoomDetailView: View {
             Section {
                 LabeledContent("Compass offset") {
                     if let off = refs.compassOffsetDeg {
-                        Text(String(format: "%.1f°", off))
+                        Text(String(format: "%.1f°", off) + (refs.compassOffsetSource == .house ? " (from house)" : ""))
                     } else {
                         Text("Not derived").foregroundStyle(.secondary)
                     }
@@ -156,7 +160,8 @@ struct RoomDetailView: View {
                         Text(d.name).tag(UUID?.some(d.id))
                     }
                 }
-                if let anchor = ReferenceDirections.anchor(room: room, devices: devices),
+                if let anchor = ReferenceDirections.anchor(room: room, devices: store.config.devices,
+                                                           house: HouseCalibration(config: store.config)),
                    let d = store.config.device(id: anchor.id) {
                     LabeledContent("Zero-gesture target", value: d.name)
                 } else {
@@ -167,7 +172,7 @@ struct RoomDetailView: View {
             } header: {
                 Text("Calibration")
             } footer: {
-                Text("The compass offset and pitch bias come from devices that are both taught and have coordinates. The anchor is used when the watch has no compass heading: point at it and hold to zero.")
+                Text("The compass offset and pitch bias come from devices that are both taught and have coordinates — in this room, or (for a room aligned to the house model) in any aligned room. The anchor is used when the watch has no compass heading: point at it and hold to zero.")
             }
 
             Section {
@@ -193,7 +198,8 @@ struct RoomDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             } else if let off = refs.compassOffsetDeg {
-                Label(String(format: "Aligned ✓ (offset %.0f°)", off), systemImage: "checkmark.seal.fill")
+                Label(String(format: refs.compassOffsetSource == .house ? "Aligned via the house ✓ (offset %.0f°)" : "Aligned ✓ (offset %.0f°)", off),
+                      systemImage: "checkmark.seal.fill")
                     .font(.footnote)
                     .foregroundStyle(.green)
             } else {

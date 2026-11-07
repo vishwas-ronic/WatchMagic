@@ -8,7 +8,9 @@ import WatchMagicKit
 /// - sends taught vectors (`transferUserInfo`) and keeps them as local
 ///   overrides until the phone echoes them back in a config;
 /// - sends motion traces (`transferFile`);
-/// - relays Home Assistant calls and state fetches through the phone (`sendMessage` + reply).
+/// - relays Home Assistant calls and state fetches through the phone (`sendMessage` + reply);
+/// - receives phone-guided gesture-training commands and reports progress
+///   (`TrainingStart` / `TrainingCancel` in, `TrainingStatus` out).
 ///
 /// Local taught-vector merge rule: every taught/cleared vector is recorded in
 /// `pendingTaught[deviceID]` (persisted) and applied on top of every received
@@ -44,6 +46,9 @@ final class WatchSyncService: NSObject, ObservableObject, WCSessionDelegate {
     /// Device IDs whose taught vector the phone hasn't confirmed yet.
     @Published private(set) var pendingTaughtIDs: Set<UUID> = []
     @Published private(set) var traceStatus: String?
+    /// Training start from the phone → the status to reply with (set by AppServices).
+    var onTrainingStart: ((TrainingStart) -> TrainingStatus)?
+    var onTrainingCancel: ((UUID) -> Void)?
     @Published private(set) var lastError: String?
 
     /// Called after the effective config or token changes.
@@ -105,6 +110,8 @@ final class WatchSyncService: NSObject, ObservableObject, WCSessionDelegate {
         }
         s.transferFile(url, metadata: SyncPayload.traceMetadata(fileName: url.lastPathComponent))
         traceStatus = "Sending \(url.lastPathComponent)…"
+        Diag.event("file_transfer_start", ["file": url.lastPathComponent, "outstanding": s.outstandingFileTransfers.count,
+                                           "reachable": s.isReachable])
         return true
     }
 
@@ -234,6 +241,50 @@ final class WatchSyncService: NSObject, ObservableObject, WCSessionDelegate {
         }
     }
 
+    // MARK: - Gesture training
+
+    /// Live progress to the phone (best effort: only while it is reachable).
+    func sendTrainingStatus(_ status: TrainingStatus) {
+        guard let s = session, s.activationState == .activated, s.isReachable,
+              let dict = try? status.dictionary() else {
+            Diag.event("training_status_unsent", ["phase": status.phase.rawValue])
+            return
+        }
+        s.sendMessage(dict, replyHandler: nil) { error in
+            Diag.event("training_status_error", ["phase": status.phase.rawValue, "error": error.localizedDescription])
+        }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any],
+                             replyHandler: @escaping ([String: Any]) -> Void) {
+        switch SyncPayload.kind(of: message) {
+        case .trainingStart:
+            guard let start = try? TrainingStart(dictionary: message) else {
+                replyHandler([SyncPayload.Keys.kind: "error"])
+                return
+            }
+            onMain { [weak self] in
+                let status = self?.onTrainingStart?(start)
+                    ?? TrainingStatus(sessionID: start.sessionID, label: start.label, phase: .failed,
+                                      message: "Watch app not ready")
+                replyHandler((try? status.dictionary()) ?? [:])
+            }
+        case .trainingCancel:
+            if let c = try? TrainingCancel(dictionary: message) {
+                onMain { [weak self] in self?.onTrainingCancel?(c.sessionID) }
+            }
+            replyHandler([:])
+        default:
+            replyHandler([:])
+        }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        if SyncPayload.kind(of: message) == .trainingCancel, let c = try? TrainingCancel(dictionary: message) {
+            onMain { [weak self] in self?.onTrainingCancel?(c.sessionID) }
+        }
+    }
+
     // MARK: - WCSessionDelegate (any queue → main)
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState,
@@ -288,6 +339,9 @@ final class WatchSyncService: NSObject, ObservableObject, WCSessionDelegate {
         let name = url.lastPathComponent
         let message = error.map { "Trace failed: \($0.localizedDescription)" } ?? "Sent \(name) ✓"
         if error == nil { try? FileManager.default.removeItem(at: url) }
+        var fields: [String: Any?] = ["file": name, "ok": error == nil]
+        if let error { fields.merge(Diag.errorFields(error)) { a, _ in a } }
+        Diag.event("file_transfer_done", fields)
         onMain { [weak self] in self?.traceStatus = message }
     }
 }

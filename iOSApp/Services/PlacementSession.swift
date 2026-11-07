@@ -62,6 +62,15 @@ final class PlacementSession: NSObject, ObservableObject {
     enum Mark: Hashable {
         case seat
         case device(UUID)
+        /// House-alignment corner mark, slot 0 = A, 1 = B.
+        case corner(Int)
+    }
+
+    /// A raycast hit (ARKit world frame).
+    struct SurfaceHit {
+        var position: SIMD3<Float>
+        /// Unit surface normal, if known.
+        var normal: SIMD3<Float>?
     }
 
     let roomID: UUID
@@ -77,6 +86,10 @@ final class PlacementSession: NSObject, ObservableObject {
     @Published private(set) var placed: [UUID: SIMD3<Float>] = [:]
     /// Seat set in this session (ARKit world frame).
     @Published private(set) var seat: SIMD3<Float>?
+    /// House-alignment corners marked in this session (slot → ARKit world point).
+    @Published private(set) var cornerMarks: [Int: SIMD3<Float>] = [:]
+    /// Mount surface of devices placed in this session.
+    @Published private(set) var mounts: [UUID: DeviceMount] = [:]
     /// Fatal problem (no camera access, AR unsupported, session failure).
     @Published private(set) var errorMessage: String?
     @Published private(set) var canUndo = false
@@ -85,14 +98,14 @@ final class PlacementSession: NSObject, ObservableObject {
     private let existingCoords: [UUID: Vector3]
     private let existingSeat: Vector3?
     private let names: [UUID: String]
-    private var history: [(mark: Mark, previous: SIMD3<Float>?)] = []
+    private var history: [(mark: Mark, previous: SIMD3<Float>?, previousMount: DeviceMount?)] = []
     private var markers: [Mark: (anchor: AnchorEntity, label: Entity)] = [:]
     private var updateSubscription: Cancellable?
     private var lastUpdate: TimeInterval = 0
 
     var sameFrame: Bool { frameState == .relocalized }
     var canPlace: Bool { (frameState == .relocalized || frameState == .fresh) && errorMessage == nil }
-    var hasChanges: Bool { !placed.isEmpty || seat != nil }
+    var hasChanges: Bool { !placed.isEmpty || seat != nil || !cornerMarks.isEmpty }
 
     init(roomID: UUID, devices: [ControlledDevice], existingSeat: Vector3?) {
         self.roomID = roomID
@@ -144,6 +157,8 @@ final class PlacementSession: NSObject, ObservableObject {
         markers = [:]
         placed = [:]
         seat = nil
+        cornerMarks = [:]
+        mounts = [:]
         history = []
         canUndo = false
         hitDistance = nil
@@ -165,8 +180,9 @@ final class PlacementSession: NSObject, ObservableObject {
     @discardableResult
     func place(deviceID: UUID) -> Bool {
         guard canPlace, let hit = surfaceHit() else { return false }
-        record(.device(deviceID), previous: placed[deviceID])
-        placed[deviceID] = hit
+        record(.device(deviceID), previous: placed[deviceID], previousMount: mounts[deviceID])
+        placed[deviceID] = hit.position
+        mounts[deviceID] = mount(for: hit)
         refreshMarker(.device(deviceID))
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         return true
@@ -176,7 +192,7 @@ final class PlacementSession: NSObject, ObservableObject {
     func setSeat() {
         guard canPlace else { return }
         let cam = arView.cameraTransform.translation
-        record(.seat, previous: seat)
+        record(.seat, previous: seat, previousMount: nil)
         seat = cam
         refreshMarker(.seat)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -186,31 +202,87 @@ final class PlacementSession: NSObject, ObservableObject {
         guard let last = history.popLast() else { return }
         switch last.mark {
         case .seat: seat = last.previous
-        case .device(let id): placed[id] = last.previous
+        case .device(let id):
+            placed[id] = last.previous
+            mounts[id] = last.previousMount
+        case .corner(let slot): cornerMarks[slot] = last.previous
         }
         canUndo = !history.isEmpty
         refreshMarker(last.mark)
     }
 
-    private func record(_ mark: Mark, previous: SIMD3<Float>?) {
-        history.append((mark, previous))
+    private func record(_ mark: Mark, previous: SIMD3<Float>?, previousMount: DeviceMount?) {
+        history.append((mark, previous, previousMount))
         canUndo = true
+    }
+
+    // MARK: - House alignment
+
+    /// Marks house-alignment corner `slot` (0 = A, 1 = B) at the surface under
+    /// the reticle (aim where the two walls meet the floor). False on a miss.
+    @discardableResult
+    func markCorner(slot: Int) -> Bool {
+        guard canPlace, let hit = surfaceHit() else { return false }
+        record(.corner(slot), previous: cornerMarks[slot], previousMount: nil)
+        cornerMarks[slot] = hit.position
+        refreshMarker(.corner(slot))
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        return true
+    }
+
+    /// Forgets a corner mark (its polygon corner was changed).
+    func clearCorner(slot: Int) {
+        guard cornerMarks[slot] != nil else { return }
+        record(.corner(slot), previous: cornerMarks[slot], previousMount: nil)
+        cornerMarks[slot] = nil
+        refreshMarker(.corner(slot))
+    }
+
+    /// Alignment from the two marks ↔ the two chosen polygon corners, or nil
+    /// until both are marked (or if they're too close together).
+    func houseAlignment(spaceID: String, corners: (PlanPoint, PlanPoint), floorLevel: Double) -> HouseAlignment? {
+        guard let a = cornerMarks[0], let b = cornerMarks[1] else { return nil }
+        return HouseAlignment.solve(spaceID: spaceID, roomCorners: (Self.roomPoint(a), Self.roomPoint(b)),
+                                    houseCorners: corners, floorLevel: floorLevel)
+    }
+
+    // MARK: - Mount
+
+    /// Mount from the hit surface's normal; "floor vs table" by height above
+    /// the floor (marked corners, else the lowest ARKit floor plane).
+    private func mount(for hit: SurfaceHit) -> DeviceMount? {
+        guard let n = hit.normal else { return nil }
+        let normal = ARFrameConversion.roomPoint(fromARKit: Vector3(Double(n.x), Double(n.y), Double(n.z)))
+        let height = floorY().map { Double(hit.position.y - $0) }
+        return DeviceMount.classify(normal: normal, heightAboveFloor: height)
+    }
+
+    /// Floor height (ARKit y), if known.
+    private func floorY() -> Float? {
+        let marks = cornerMarks.values
+        if !marks.isEmpty { return marks.map(\.y).reduce(0, +) / Float(marks.count) }
+        let floors = (arView.session.currentFrame?.anchors ?? [])
+            .compactMap { $0 as? ARPlaneAnchor }
+            .filter { $0.alignment == .horizontal && $0.classification == .floor }
+            .map { $0.transform.columns.3.y }
+        return floors.min()
     }
 
     /// Surface point under the screen centre: LiDAR mesh first, then detected
     /// plane geometry, then estimated planes.
-    private func surfaceHit() -> SIMD3<Float>? {
+    private func surfaceHit() -> SurfaceHit? {
         let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
         guard arView.bounds.width > 0 else { return nil }
         if supportsMesh, let ray = arView.ray(through: center),
            let hit = arView.scene.raycast(origin: ray.origin, direction: ray.direction, length: 15,
                                           query: .nearest, mask: .all, relativeTo: nil).first {
-            return hit.position
+            return SurfaceHit(position: hit.position, normal: simd_normalize(hit.normal))
         }
         for target in [ARRaycastQuery.Target.existingPlaneGeometry, .estimatedPlane] {
             if let r = arView.raycast(from: center, allowing: target, alignment: .any).first {
-                let c = r.worldTransform.columns.3
-                return SIMD3(c.x, c.y, c.z)
+                let c = r.worldTransform.columns.3, y = r.worldTransform.columns.1
+                // A plane hit's local +y is its normal.
+                return SurfaceHit(position: SIMD3(c.x, c.y, c.z), normal: simd_normalize(SIMD3(y.x, y.y, y.z)))
             }
         }
         return nil
@@ -219,11 +291,13 @@ final class PlacementSession: NSObject, ObservableObject {
     // MARK: - Saving
 
     /// This session's result, converted to the room frame.
-    func makePlacement() -> RoomPlacement {
+    func makePlacement(houseAlignment: HouseAlignment? = nil) -> RoomPlacement {
         RoomPlacement(roomID: roomID,
                       seat: seat.map(Self.roomPoint),
                       devicePositions: placed.mapValues(Self.roomPoint),
-                      sameFrame: sameFrame)
+                      sameFrame: sameFrame,
+                      houseAlignment: houseAlignment,
+                      deviceMounts: mounts.filter { placed[$0.key] != nil })
     }
 
     /// Saves the world map so the next session can relocalize into this frame.
@@ -278,12 +352,18 @@ final class PlacementSession: NSObject, ObservableObject {
             current = seat; earlier = existingSeat; title = "Seat"
         case .device(let id):
             current = placed[id]; earlier = existingCoords[id]; title = names[id] ?? "Device"
+        case .corner(let slot):
+            current = cornerMarks[slot]; earlier = nil; title = slot == 0 ? "Corner A" : "Corner B"
         }
         let position: SIMD3<Float>
         let color: UIColor
         if let current {
             position = current
-            color = mark == .seat ? .systemBlue : .systemGreen
+            switch mark {
+            case .seat: color = .systemBlue
+            case .corner: color = .systemOrange
+            case .device: color = .systemGreen
+            }
         } else if sameFrame, let earlier {
             position = Self.arkitPoint(earlier)
             color = .systemGray
@@ -331,7 +411,7 @@ final class PlacementSession: NSObject, ObservableObject {
         let cam = arView.cameraTransform.translation
         for m in markers.values { face(m.label, toward: cam) }
 
-        let distance = canPlace ? surfaceHit().map { simd_distance($0, cam) } : nil
+        let distance = canPlace ? surfaceHit().map { simd_distance($0.position, cam) } : nil
         switch (distance, hitDistance) {
         case (nil, nil): break
         case let (d?, old?) where abs(d - old) < 0.05: break

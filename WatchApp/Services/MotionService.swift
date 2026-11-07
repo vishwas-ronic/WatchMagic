@@ -256,7 +256,8 @@ final class MotionService: NSObject, ObservableObject, CLLocationManagerDelegate
             rotationRate: Vector3(dm.rotationRate.x, dm.rotationRate.y, dm.rotationRate.z),
             gravity: gravity,
             attitude: Quaternion(x: q.x, y: q.y, z: q.z, w: q.w),
-            heading: heading
+            heading: heading,
+            userAcceleration: Vector3(dm.userAcceleration.x, dm.userAcceleration.y, dm.userAcceleration.z)
         )
         let raw = ForearmGeometry.worldPointing(rotationMatrix: m, sign: snap.pointingSign)
         let pointing = raw.rotatedAboutZ(deg: snap.anchor.offsetDeg)

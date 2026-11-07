@@ -231,6 +231,8 @@ public enum HAError: Error, LocalizedError, Equatable, Sendable {
     case http(status: Int, body: String)
     /// A 2xx response that was not the expected JSON.
     case invalidResponse
+    /// `GET /local/house3d/house.json` returned 404.
+    case noHouseModel
 
     public var errorDescription: String? {
         switch self {
@@ -239,6 +241,7 @@ public enum HAError: Error, LocalizedError, Equatable, Sendable {
         case .unreachable: return "HA unreachable"
         case .http(let status, _): return "HTTP \(status)"
         case .invalidResponse: return "Unexpected response from HA"
+        case .noHouseModel: return "No house3d model on HA"
         }
     }
 

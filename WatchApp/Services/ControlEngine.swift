@@ -39,7 +39,34 @@ enum PipelineEvent: Sendable {
     case zeroed(correctionDeg: Double)
     case teach(TeachCapture.Event)
     case recordingProgress(remaining: TimeInterval)
-    case recordingFinished(url: URL?, samples: Int, error: String?)
+    case recordingFinished(url: URL?, samples: Int, error: String?, kind: TraceKind)
+    case training(TrainingEvent)
+}
+
+/// Progress of a phone-guided training recording (motion queue → main).
+enum TrainingEvent: Sendable {
+    case recording(TrainingStart)
+    case cue(TrainingStart, index: Int, total: Int, t: TimeInterval)
+    /// `url` nil = not written (`error`). `complete` false = cut short (motion stopped).
+    case finished(TrainingStart, url: URL?, samples: Int, complete: Bool, error: String?)
+    case cancelled(TrainingStart)
+}
+
+/// Wearing info written into training CSV headers.
+struct WearingInfo: Sendable {
+    var wristIsLeft: Bool
+    var crownIsRight: Bool
+    var requestedRateHz: Double
+}
+
+/// Which motion dump a written CSV is.
+enum TraceKind: String, Sendable {
+    /// Sensor Probe → Record 10 s, completed.
+    case record
+    /// A recording cut short because samples stopped arriving (app suspended).
+    case stalled
+    /// Sensor Probe → Send last 60 s (rolling buffer).
+    case ring
 }
 
 /// Per-sample pipeline, confined to the motion queue:
@@ -59,6 +86,15 @@ final class ControlPipeline: @unchecked Sendable {
     private var zero = ZeroHoldDetector()
     private var teach: TeachCapture?
     private var recorder: TraceRecorder?
+    /// Always-on rolling buffer of the last 60 s (Sensor Probe → Send last 60 s).
+    private var ring = MotionRingBuffer(duration: 60, maxRateHz: 110)
+    /// Strong-rotation bursts → diag log (sub-threshold flicks included).
+    private var bursts = RotationBurstTracker(threshold: 1.5)
+    private var names: [UUID: String] = [:]
+    private var lockedID: UUID?
+    private var lockedAtT: TimeInterval = 0
+    /// Phone-guided gesture-training recording in progress.
+    private var trainer: (start: TrainingStart, recorder: TrainingRecorder, wearing: WearingInfo)?
     private var snap = AimSnapshot()
     private var lastPublishT: TimeInterval = 0
     private var lastTickT: TimeInterval = 0
@@ -79,8 +115,10 @@ final class ControlPipeline: @unchecked Sendable {
 
     // MARK: Commands (any thread → queue)
 
-    func configure(candidates: [TargetCandidate], anchor: TargetCandidate?, settings: Settings, resetLock: Bool) {
+    func configure(candidates: [TargetCandidate], anchor: TargetCandidate?, settings: Settings, resetLock: Bool,
+                   names: [UUID: String]) {
         queue.async { [self] in
+            self.names = names
             self.candidates = candidates
             self.anchor = anchor
             self.settings = settings
@@ -118,6 +156,100 @@ final class ControlPipeline: @unchecked Sendable {
         queue.async { [self] in recorder = TraceRecorder(duration: duration) }
     }
 
+    /// Ends a recording that stopped receiving samples (watchdog on main):
+    /// writes what was captured, if anything.
+    func abortRecording(reason: String) {
+        queue.async { [self] in
+            guard let r = recorder else { return }
+            recorder = nil
+            Diag.event("recording_abort", ["reason": reason, "samples": r.samples.count])
+            if r.samples.isEmpty {
+                emit(.recordingFinished(url: nil, samples: 0, error: "Recording stopped: \(reason)", kind: .stalled))
+            } else {
+                finishRecording(r.samples, kind: .stalled)
+            }
+        }
+    }
+
+    /// Starts a training recording (from the next sample). Replaces any running one.
+    func startTraining(_ start: TrainingStart, wearing: WearingInfo) {
+        queue.async { [self] in
+            if let old = trainer { emit(.training(.cancelled(old.start))) }
+            trainer = (start, TrainingRecorder(label: start.label, plan: start.plan), wearing)
+            aimLock.reset()
+        }
+    }
+
+    func cancelTraining(sessionID: UUID?) {
+        queue.async { [self] in
+            guard let tr = trainer, sessionID == nil || tr.start.sessionID == sessionID else { return }
+            trainer = nil
+            Diag.event("training_cancel", ["label": tr.start.label.rawValue, "samples": tr.recorder.samples.count])
+            emit(.training(.cancelled(tr.start)))
+        }
+    }
+
+    private func processTraining(_ f: MotionFrame) {
+        guard var tr = trainer else { return }
+        let t = f.sample.t
+        if tr.recorder.isStalled(at: t) {
+            trainer = nil
+            Diag.event("training_stalled", ["label": tr.start.label.rawValue, "samples": tr.recorder.samples.count,
+                                            "gapS": t - (tr.recorder.lastSampleTime ?? t)])
+            finishTraining(tr, sign: f.pointingSign)
+            return
+        }
+        let first = tr.recorder.samples.isEmpty
+        let events = tr.recorder.append(f.sample)
+        trainer = tr
+        if first { emit(.training(.recording(tr.start))) }
+        for e in events {
+            switch e {
+            case .cue(let i, let n):
+                emit(.training(.cue(tr.start, index: i, total: n, t: t)))
+            case .finished:
+                trainer = nil
+                finishTraining(tr, sign: f.pointingSign)
+            }
+        }
+    }
+
+    private func finishTraining(_ tr: (start: TrainingStart, recorder: TrainingRecorder, wearing: WearingInfo), sign: Double) {
+        let emitter = self.emitter
+        DispatchQueue.global(qos: .utility).async {
+            let rec = tr.recorder
+            let name = TrainingRecorder.fileName(label: tr.start.label, date: Date())
+            let url = Diag.outbox.appendingPathComponent(name)
+            let csv = rec.csv(wristIsLeft: tr.wearing.wristIsLeft, crownIsRight: tr.wearing.crownIsRight,
+                              pointingSign: sign, requestedRateHz: tr.wearing.requestedRateHz)
+            do {
+                try FileManager.default.createDirectory(at: Diag.outbox, withIntermediateDirectories: true)
+                try csv.write(to: url, atomically: true, encoding: .utf8)
+                Diag.event("training_written", ["file": name, "samples": rec.samples.count, "cues": rec.cueTimes.count,
+                                                "complete": rec.isFinished, "rateHz": rec.measuredRateHz])
+                emitter.snapshot?(.training(.finished(tr.start, url: url, samples: rec.samples.count,
+                                                      complete: rec.isFinished, error: nil)))
+            } catch {
+                emitter.snapshot?(.training(.finished(tr.start, url: nil, samples: rec.samples.count,
+                                                      complete: rec.isFinished, error: error.localizedDescription)))
+            }
+        }
+    }
+
+    /// Writes the last 60 s of samples as a trace (Sensor Probe → Send last 60 s).
+    func dumpRing() {
+        queue.async { [self] in
+            let samples = ring.samples()
+            Diag.event("ring_dump", ["samples": samples.count,
+                                     "spanS": samples.last.map { $0.t - samples[0].t }])
+            guard !samples.isEmpty else {
+                emit(.recordingFinished(url: nil, samples: 0, error: "No motion samples yet", kind: .ring))
+                return
+            }
+            finishRecording(samples, kind: .ring)
+        }
+    }
+
     // MARK: Per sample (motion queue)
 
     func process(_ f: MotionFrame) {
@@ -126,11 +258,19 @@ final class ControlPipeline: @unchecked Sendable {
         gestures.pointingSign = f.pointingSign
         var urgent = false
 
-        // Trace recording.
+        ring.append(f.sample)
+        processTraining(f)
+
+        // Trace recording. A gap > 1 s (app suspended) ends it with what it has.
+        if let r = recorder, r.isStalled(at: t) {
+            recorder = nil
+            Diag.event("recording_stalled", ["gapS": t - (r.lastSampleTime ?? t), "samples": r.samples.count])
+            finishRecording(r.samples, kind: .stalled)
+        }
         if var r = recorder {
             if r.append(f.sample) {
                 recorder = nil
-                finishRecording(r.samples)
+                finishRecording(r.samples, kind: .record)
             } else {
                 recorder = r
                 if t - lastTickT >= 0.25 {
@@ -160,7 +300,7 @@ final class ControlPipeline: @unchecked Sendable {
         }
 
         // Aim.
-        let canAim = aimEnabled && f.headingReady && teach == nil
+        let canAim = aimEnabled && f.headingReady && teach == nil && trainer == nil
         var resolution: Resolution = .none
         var nearest: (id: UUID, angle: Double)?
         if f.headingReady {
@@ -174,9 +314,19 @@ final class ControlPipeline: @unchecked Sendable {
         }
         switch aimLock.update(time: t, pitchDeg: k.pitchDeg, angularSpeed: k.angularSpeed, resolution: resolution) {
         case .locked(let id):
+            lockedID = id
+            lockedAtT = t
+            Diag.event("lock", ["device": names[id], "candidates": aimLock.lock?.candidates.count,
+                                "angleDeg": angle(to: id, f.pointing), "pitchDeg": k.pitchDeg,
+                                "speed": k.angularSpeed])
             emit(.locked(id))
             urgent = true
         case .unlocked:
+            Diag.event("unlock", ["device": lockedID.flatMap { names[$0] }, "heldS": t - lockedAtT,
+                                  "angleDeg": lockedID.flatMap { angle(to: $0, f.pointing) },
+                                  "onTarget": lockedID.map { resolution.ids.contains($0) },
+                                  "pitchDeg": k.pitchDeg, "speed": k.angularSpeed])
+            lockedID = nil
             urgent = true
         default:
             break
@@ -184,15 +334,44 @@ final class ControlPipeline: @unchecked Sendable {
 
         // Gestures: act only when locked and the gesture window is open.
         if let g = gestures.process(f.sample) {
+            bursts.noteGesture()
             snap.lastGesture = g
-            if canAim, let target = aimLock.target(forGestureAt: g.t) {
+            let reason: String?
+            if !aimEnabled { reason = "aim disabled" }
+            else if teach != nil { reason = "teaching" }
+            else if trainer != nil { reason = "training" }
+            else if !f.headingReady { reason = "heading not ready" }
+            else if aimLock.lock == nil { reason = "not locked" }
+            else if !aimLock.isGestureWindowOpen(at: g.t) { reason = "window closed" }
+            else { reason = nil }
+            let lock = aimLock.lock
+            var fields: [String: Any?] = [
+                "type": g.gesture.rawValue, "peakRate": g.peakRate, "acted": reason == nil, "reason": reason,
+                "pitchDeg": k.pitchDeg, "speed": k.angularSpeed,
+            ]
+            if let lock {
+                fields["device"] = names[lock.selectedID]
+                fields["lockAgeS"] = g.t - lock.lockedAt
+                fields["windowAgeS"] = g.t - lock.windowStart
+            }
+            if reason == nil, let target = aimLock.target(forGestureAt: g.t) {
                 aimLock.noteGesture(at: g.t)
                 snap.lastGestureActed = true
+                Diag.event("gesture", fields)
                 emit(.gesture(g, target: target))
             } else {
                 snap.lastGestureActed = false
+                Diag.event("gesture", fields)
             }
             urgent = true
+        }
+
+        // Strong-rotation bursts (one line per burst, rate-limited).
+        if let b = bursts.process(t: t, pitchRate: k.pitchRate, rollRate: k.rollRate, speed: k.angularSpeed) {
+            Diag.event("burst", ["durS": b.duration, "maxPitchRate": b.maxPitchRate, "maxRollRate": b.maxRollRate,
+                                 "maxSpeed": b.maxSpeed, "samples": b.samples, "gesture": b.gestureFired,
+                                 "suppressedBefore": b.suppressedBefore, "locked": aimLock.lock != nil,
+                                 "aimEnabled": aimEnabled])
         }
 
         // Zero gesture (yaw still arbitrary, anchor known, Aim screen open).
@@ -226,25 +405,39 @@ final class ControlPipeline: @unchecked Sendable {
         emit(.snapshot(snap))
     }
 
+    private func angle(to id: UUID, _ pointing: Vector3) -> Double? {
+        candidates.first { $0.id == id }.map { pointing.angle(to: $0.direction) }
+    }
+
     private func fillLock() {
         snap.lockCandidates = aimLock.lock?.candidates ?? []
         snap.selectedIndex = aimLock.lock?.selectedIndex ?? 0
         if aimLock.lock == nil { snap.windowOpen = false }
     }
 
-    private func finishRecording(_ samples: [MotionSample]) {
+    private func finishRecording(_ samples: [MotionSample], kind: TraceKind) {
         let emitter = self.emitter
         DispatchQueue.global(qos: .utility).async {
             let f = DateFormatter()
             f.dateFormat = "yyyyMMdd-HHmmss"
             f.locale = Locale(identifier: "en_US_POSIX")
-            let name = "trace-\(f.string(from: Date())).csv"
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+            let prefix: String
+            switch kind {
+            case .record: prefix = "trace"
+            case .stalled: prefix = "trace-partial"
+            case .ring: prefix = "last60s"
+            }
+            let name = "\(prefix)-\(f.string(from: Date())).csv"
+            // Persistent outbox (not tmp): the file must survive until the transfer finishes.
+            let url = Diag.outbox.appendingPathComponent(name)
             do {
+                try FileManager.default.createDirectory(at: Diag.outbox, withIntermediateDirectories: true)
                 try MotionCSV.encode(samples).write(to: url, atomically: true, encoding: .utf8)
-                emitter.snapshot?(.recordingFinished(url: url, samples: samples.count, error: nil))
+                Diag.event("trace_written", ["file": name, "samples": samples.count, "kind": kind.rawValue])
+                emitter.snapshot?(.recordingFinished(url: url, samples: samples.count, error: nil, kind: kind))
             } catch {
-                emitter.snapshot?(.recordingFinished(url: nil, samples: samples.count, error: error.localizedDescription))
+                Diag.event("trace_write_failed", ["file": name, "error": error.localizedDescription])
+                emitter.snapshot?(.recordingFinished(url: nil, samples: samples.count, error: error.localizedDescription, kind: kind))
             }
         }
     }
@@ -292,6 +485,19 @@ final class ControlEngine: ObservableObject {
     @Published private(set) var latenciesMs: [Double] = []
     @Published private(set) var teach = TeachStatus()
     @Published private(set) var recording = RecordingStatus.idle
+    /// Result of the last "Send last 60 s" / "Send diag log".
+    @Published private(set) var dumpStatus: String?
+
+    /// Phone-guided training recording, for the watch's Training screen.
+    struct TrainingUI: Equatable {
+        var label: TrainingLabel
+        var phase: String
+        var cue = 0
+        var cueTotal: Int
+        var done = false
+    }
+    @Published private(set) var training: TrainingUI?
+    private var trainingStart: TrainingStart?
 
     let motion: MotionService
     let sync: WatchSyncService
@@ -303,6 +509,10 @@ final class ControlEngine: ObservableObject {
     /// Uptime of the last state write per entity, so an older in-flight fetch
     /// can't overwrite a newer state (e.g. from a service-call response).
     private var stateStamp: [String: TimeInterval] = [:]
+    /// Uptime of the last recording progress event (recording watchdog).
+    private var lastRecordingProgress: TimeInterval = 0
+    private var recordingWatchdog: Timer?
+    private var aimVisible = false
 
     init(motion: MotionService, sync: WatchSyncService) {
         self.motion = motion
@@ -346,6 +556,29 @@ final class ControlEngine: ObservableObject {
 
     func setAimScreenVisible(_ visible: Bool) {
         pipeline.setAimEnabled(visible)
+        guard visible != aimVisible else { return }
+        aimVisible = visible
+        guard visible else {
+            Diag.event("aim_stop")
+            return
+        }
+        let ms = motion.status
+        let url = config?.haURL
+        Diag.event("aim_start", [
+            "headingSource": ms.source.rawValue, "headingReady": ms.headingReady, "yawOffsetDeg": ms.yawOffsetDeg,
+            "compassAccuracyDeg": ms.compassAccuracyDeg, "frames": ms.availableFrames,
+            "room": room?.name, "candidates": aim.lockCandidates.isEmpty ? nil : aim.lockCandidates.count,
+            "haURL": url?.absoluteString, "hasClient": hasClient, "phoneReachable": sync.isReachable,
+            "rateHz": ms.measuredRateHz,
+        ])
+        if let host = url?.host {
+            DispatchQueue.global(qos: .utility).async {
+                let started = ProcessInfo.processInfo.systemUptime
+                let r = Diag.resolve(host: host)
+                Diag.event("ha_resolve", ["host": host, "addresses": r.addresses, "error": r.error,
+                                          "ms": (ProcessInfo.processInfo.systemUptime - started) * 1000])
+            }
+        }
     }
 
     func crown(next: Bool) {
@@ -383,7 +616,134 @@ final class ControlEngine: ObservableObject {
     func startRecording(duration: TimeInterval = 10) {
         guard !recording.isRecording else { return }
         recording = .recording(remaining: duration)
+        lastRecordingProgress = ProcessInfo.processInfo.systemUptime
+        Diag.event("recording_start", ["durationS": duration, "motionRunning": motion.status.isRunning])
         pipeline.startRecording(duration: duration)
+        // Watchdog: if no samples arrive for > 1 s (motion stopped / app suspended),
+        // end the recording with what it has instead of staying in "Recording…".
+        recordingWatchdog?.invalidate()
+        recordingWatchdog = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkRecording() }
+        }
+    }
+
+    private func checkRecording() {
+        guard recording.isRecording else {
+            recordingWatchdog?.invalidate()
+            recordingWatchdog = nil
+            return
+        }
+        // Progress events come every 0.25 s while samples flow.
+        let silent = ProcessInfo.processInfo.systemUptime - lastRecordingProgress
+        if silent > 1.5 {
+            recordingWatchdog?.invalidate()
+            recordingWatchdog = nil
+            recording = .failed(String(format: "No motion samples for %.1f s — saving what was recorded", silent))
+            pipeline.abortRecording(reason: String(format: "no samples for %.1f s", silent))
+        }
+    }
+
+    // MARK: - Gesture training (guided from the phone)
+
+    /// Phone asked to record `start`. Returns the reply status.
+    func startTraining(_ start: TrainingStart) -> TrainingStatus {
+        guard motion.status.deviceMotionAvailable else {
+            return TrainingStatus(sessionID: start.sessionID, label: start.label, phase: .failed,
+                                  message: "Device motion unavailable")
+        }
+        motion.start()
+        trainingStart = start
+        let ms = motion.status
+        training = TrainingUI(label: start.label, phase: "Starting…",
+                              cueTotal: start.plan.cueOffsets(for: start.label).count)
+        Diag.event("training_start", ["label": start.label.rawValue, "cues": start.cueCount,
+                                      "intervalS": start.cueIntervalS, "rateHz": ms.requestedRateHz])
+        pipeline.startTraining(start, wearing: WearingInfo(wristIsLeft: ms.wristIsLeft, crownIsRight: ms.crownIsRight,
+                                                           requestedRateHz: ms.requestedRateHz))
+        return TrainingStatus(sessionID: start.sessionID, label: start.label, phase: .accepted)
+    }
+
+    /// Stops the current training recording (from the phone, or the watch's Stop button).
+    func cancelTraining(sessionID: UUID? = nil) {
+        pipeline.cancelTraining(sessionID: sessionID)
+    }
+
+    private func handleTraining(_ e: TrainingEvent) {
+        func status(_ s: TrainingStart, _ phase: TrainingStatus.Phase, cue: Int? = nil, total: Int? = nil,
+                    samples: Int? = nil, file: String? = nil, message: String? = nil) {
+            sync.sendTrainingStatus(TrainingStatus(sessionID: s.sessionID, label: s.label, phase: phase, cueIndex: cue,
+                                                   cueTotal: total, samples: samples, fileName: file, message: message))
+        }
+        func updateUI(_ s: TrainingStart, _ body: (inout TrainingUI) -> Void) {
+            guard s.sessionID == trainingStart?.sessionID, var ui = training else { return }
+            body(&ui)
+            training = ui
+        }
+        switch e {
+        case .recording(let s):
+            updateUI(s) { $0.phase = "Recording" }
+            status(s, .recording)
+        case .cue(let s, let i, let n, let t):
+            WKInterfaceDevice.current().play(.start)
+            Diag.event("training_cue", ["label": s.label.rawValue, "index": i, "t": t])
+            updateUI(s) { $0.cue = i + 1 }
+            status(s, .cue, cue: i, total: n)
+        case .finished(let s, let url, let n, let complete, let error):
+            guard let url else {
+                updateUI(s) { $0.phase = "Couldn't save"; $0.done = true }
+                status(s, .failed, samples: n, message: error ?? "Could not write the recording")
+                return
+            }
+            status(s, .finished, samples: n, file: url.lastPathComponent,
+                   message: complete ? nil : "Motion stopped early — partial recording")
+            if sync.sendTrace(at: url) {
+                updateUI(s) { $0.phase = complete ? "Sent to iPhone ✓" : "Partial — sent to iPhone"; $0.done = true }
+                status(s, .fileSent, samples: n, file: url.lastPathComponent)
+            } else {
+                updateUI(s) { $0.phase = "Saved; iPhone not connected"; $0.done = true }
+                status(s, .failed, samples: n, file: url.lastPathComponent, message: "Watch not connected to the iPhone")
+            }
+            WKInterfaceDevice.current().play(complete ? .success : .failure)
+        case .cancelled(let s):
+            updateUI(s) { $0.phase = "Stopped"; $0.done = true }
+            status(s, .cancelled)
+        }
+    }
+
+    /// Sensor Probe → "Send last 60 s": the rolling buffer as a trace.
+    func sendLastMinute() {
+        dumpStatus = "Writing last 60 s…"
+        pipeline.dumpRing()
+    }
+
+    /// Sensor Probe → "Send diag log": diag.log (+ its backup) to the phone's Traces list.
+    func sendDiagLog() {
+        dumpStatus = "Preparing diag log…"
+        let sync = self.sync
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            Diag.event("diag_send")
+            Diag.shared.flushSync()
+            let f = DateFormatter()
+            f.dateFormat = "yyyyMMdd-HHmmss"
+            f.locale = Locale(identifier: "en_US_POSIX")
+            let url = Diag.outbox.appendingPathComponent("diag-\(f.string(from: Date())).log")
+            var data = Data()
+            for src in [Diag.shared.backupURL, Diag.shared.url] {
+                if let d = try? Data(contentsOf: src) { data.append(d) }
+            }
+            let ok = (try? FileManager.default.createDirectory(at: Diag.outbox, withIntermediateDirectories: true)) != nil
+                && (try? data.write(to: url, options: .atomic)) != nil
+            onMain {
+                guard let self else { return }
+                if !ok {
+                    self.dumpStatus = "Could not write the log copy"
+                } else {
+                    self.dumpStatus = sync.sendTrace(at: url)
+                        ? "Diag log (\(data.count / 1024) KB) → iPhone"
+                        : "iPhone not connected"
+                }
+            }
+        }
     }
 
     // MARK: - Config
@@ -407,17 +767,32 @@ final class ControlEngine: ObservableObject {
         var candidates: [TargetCandidate] = []
         var anchor: TargetCandidate?
         var unaligned = false
+        var offsetDeg: Double?, offsetSource: String?, pitchBias: Double?
         if let config, let newRoom {
-            let refs = ReferenceDirections(room: newRoom, devices: config.devices)
+            // House-wide fallback: a room aligned to HA's house model is aimable once
+            // any aligned room has a taught + placed device (HouseCalibration).
+            let house = HouseCalibration(config: config)
+            let refs = ReferenceDirections(room: newRoom, devices: config.devices, house: house)
             candidates = refs.candidates
-            anchor = ReferenceDirections.anchor(room: newRoom, devices: config.devices)
+            offsetDeg = refs.compassOffsetDeg
+            offsetSource = refs.compassOffsetSource?.rawValue
+            pitchBias = refs.pitchBiasDeg
+            anchor = ReferenceDirections.anchor(room: newRoom, devices: config.devices, house: house)
             unaligned = newRoom.seat != nil && refs.compassOffsetDeg == nil
                 && roomDevices.contains { $0.coordinates != nil }
         }
         needsAlignment = unaligned
         anchorDevice = anchor.flatMap { config?.device(id: $0.id) }
+        let names = Dictionary(roomDevices.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
         pipeline.configure(candidates: candidates, anchor: anchor,
-                           settings: config?.settings ?? Settings(), resetLock: roomChanged)
+                           settings: config?.settings ?? Settings(), resetLock: roomChanged, names: names)
+        Diag.event("config_apply", [
+            "room": newRoom?.name, "roomChanged": roomChanged, "devices": roomDevices.count,
+            "candidates": candidates.count, "offsetDeg": offsetDeg, "offsetSource": offsetSource,
+            "pitchBiasDeg": pitchBias, "anchor": anchorDevice?.name, "needsAlignment": unaligned,
+            "hasClient": hasClient, "haURL": config?.haURL.absoluteString,
+            "sensitivity": config?.settings.sensitivity.rawValue,
+        ])
         if roomChanged { refreshRoomStates() }
     }
 
@@ -441,15 +816,35 @@ final class ControlEngine: ObservableObject {
             actionLine = "Heading set from \(anchorDevice?.name ?? "anchor")"
         case .teach(let ev):
             handleTeach(ev)
+        case .training(let ev):
+            handleTraining(ev)
         case .recordingProgress(let remaining):
+            lastRecordingProgress = ProcessInfo.processInfo.systemUptime
             if recording.isRecording { recording = .recording(remaining: remaining) }
-        case .recordingFinished(let url, let n, let error):
+        case .recordingFinished(let url, let n, let error, let kind):
+            var message: String
+            var failed = false
             if let url {
-                recording = sync.sendTrace(at: url)
-                    ? .finished("\(n) samples → iPhone")
-                    : .failed("Saved \(url.lastPathComponent), iPhone not connected")
+                let sent = sync.sendTrace(at: url)
+                Diag.event("trace_send", ["file": url.lastPathComponent, "kind": kind.rawValue, "queued": sent,
+                                          "phoneReachable": sync.isReachable])
+                switch kind {
+                case .record: message = "\(n) samples"
+                case .stalled: message = "Motion stopped early — \(n) samples"; failed = true
+                case .ring: message = "Last 60 s (\(n) samples)"
+                }
+                message += sent ? " → iPhone" : ", saved; iPhone not connected"
+                failed = failed || !sent
             } else {
-                recording = .failed(error ?? "Could not write trace")
+                message = error ?? "Could not write trace"
+                failed = true
+            }
+            if kind == .ring {
+                dumpStatus = message
+            } else {
+                recordingWatchdog?.invalidate()
+                recordingWatchdog = nil
+                recording = failed ? .failed(message) : .finished(message)
             }
         }
     }
@@ -486,22 +881,38 @@ final class ControlEngine: ObservableObject {
     private func handleGesture(_ g: DetectedGesture, target: UUID) {
         if busy {
             queued = (g, target) // latest wins; run when the current call returns
+            Diag.event("gesture_queued", ["type": g.gesture.rawValue, "device": device(target)?.name, "reason": "busy"])
             return
         }
         run(g, target: target)
     }
 
     private func run(_ g: DetectedGesture, target: UUID) {
-        guard let config, let device = config.device(id: target) else { return }
+        guard let config, let device = config.device(id: target) else {
+            Diag.event("action", ["type": g.gesture.rawValue, "result": "unknown device", "deviceID": target])
+            return
+        }
+        let state = states[device.entityID]
+        var fields: [String: Any?] = [
+            "type": g.gesture.rawValue, "device": device.name, "entity": device.entityID, "kind": device.kind.rawValue,
+            "state": state?.state, "brightnessPct": state?.brightnessPct, "percentage": state?.percentage,
+        ]
         guard let call = ActionMapper.map(gesture: g.gesture, device: device,
-                                          state: states[device.entityID], settings: config.settings) else {
+                                          state: state, settings: config.settings) else {
+            fields["result"] = "nothing to do"
+            Diag.event("action", fields)
             actionLine = "\(g.gesture.displayName): nothing to do"
             return
         }
+        fields["result"] = call.serviceName
+        fields["data"] = call.data.mapValues(\.foundationObject)
         guard let client else {
+            fields["blocked"] = "no HA client (token missing)"
+            Diag.event("action", fields)
             fail("No HA token — set up on iPhone")
             return
         }
+        Diag.event("action", fields)
         busy = true
         errorLine = nil
         actionLine = "\(g.gesture.displayName) → \(call.serviceName)"
@@ -515,20 +926,32 @@ final class ControlEngine: ObservableObject {
 
     private func execute(_ call: ServiceCall, client: HAClient, device: ControlledDevice, gesture: DetectedGesture) async {
         var outcome: Outcome
+        let base: [String: Any?] = ["service": call.serviceName, "entity": call.entityID, "url": client.baseURL.absoluteString]
+        var t0 = ProcessInfo.processInfo.systemUptime
+        func ms() -> Double { (ProcessInfo.processInfo.systemUptime - t0) * 1000 }
         do {
-            outcome = .success(try await client.callService(call), viaPhone: false)
+            let states = try await client.callService(call)
+            Diag.event("ha_call", base.merging(["ms": ms(), "ok": true, "viaPhone": false, "states": states.count]) { a, _ in a })
+            outcome = .success(states, viaPhone: false)
         } catch {
+            Diag.event("ha_call", base.merging(["ms": ms(), "ok": false, "viaPhone": false]) { a, _ in a }
+                .merging(Diag.errorFields(error)) { a, _ in a })
             let e = HAError.from(error)
             if e.isNetworkError {
                 actionLine = "Retrying via iPhone…"
+                t0 = ProcessInfo.processInfo.systemUptime
                 do {
                     let r = try await sync.relay(call)
                     if let msg = r.errorMessage {
+                        Diag.event("ha_call", base.merging(["ms": ms(), "ok": false, "viaPhone": true, "error": msg]) { a, _ in a })
                         outcome = .failure(msg)
                     } else {
+                        Diag.event("ha_call", base.merging(["ms": ms(), "ok": true, "viaPhone": true]) { a, _ in a })
                         outcome = .success(r.states ?? [], viaPhone: true)
                     }
                 } catch {
+                    Diag.event("ha_call", base.merging(["ms": ms(), "ok": false, "viaPhone": true,
+                                                        "error": "relay: \(error.localizedDescription)"]) { a, _ in a })
                     outcome = .failure(e.errorDescription ?? "HA unreachable")
                 }
             } else {
@@ -584,11 +1007,19 @@ final class ControlEngine: ObservableObject {
         fetching.insert(entityID)
         defer { fetching.remove(entityID) }
         do {
-            setState(try await client.entityState(entityID), requestedAt: started)
+            let s = try await client.entityState(entityID)
+            Diag.event("ha_state", ["entity": entityID, "ok": true, "state": s.state,
+                                    "ms": (ProcessInfo.processInfo.systemUptime - started) * 1000])
+            setState(s, requestedAt: started)
         } catch {
-            guard relayFallback, HAError.from(error).isNetworkError, sync.isReachable,
-                  let r = try? await sync.relayState(entityID),
-                  let s = r.states?.first(where: { $0.entityID == entityID }) else { return }
+            Diag.event("ha_state", ["entity": entityID, "ok": false,
+                                    "ms": (ProcessInfo.processInfo.systemUptime - started) * 1000]
+                .merging(Diag.errorFields(error)) { a, _ in a })
+            guard relayFallback, HAError.from(error).isNetworkError, sync.isReachable else { return }
+            let r = try? await sync.relayState(entityID)
+            Diag.event("ha_state", ["entity": entityID, "viaPhone": true, "ok": r?.states?.isEmpty == false,
+                                    "error": r?.errorMessage])
+            guard let s = r?.states?.first(where: { $0.entityID == entityID }) else { return }
             setState(s, requestedAt: started)
         }
     }

@@ -18,7 +18,21 @@ import Foundation
 /// `bias = mean(pitch(taught) − pitch(coordinates − seat))`, clamped to
 /// ±`maxPitchBiasDeg`, and is added to the elevation of coordinate-derived
 /// directions (yaw unchanged).
+///
+/// House-wide fallback (`HouseCalibration`): a room whose own offset can't be
+/// derived (no taught + placed device) but which is aligned to HA's house
+/// model gets its offset from the house: taught + placed devices in ANY
+/// aligned room fix the yaw of the (fixed) house frame, so
+/// `offset = K − θ_room` (see `HouseCalibration`). The room's own offset and
+/// pitch bias always take precedence; the house pitch bias is the fallback.
 public struct ReferenceDirections: Equatable, Sendable {
+    public enum OffsetSource: String, Equatable, Sendable {
+        /// From this room's taught + placed devices.
+        case room
+        /// From the house-wide calibration (room aligned to the house model).
+        case house
+    }
+
     /// Largest pitch bias applied, either way (degrees).
     public static let maxPitchBiasDeg = 20.0
 
@@ -26,16 +40,28 @@ public struct ReferenceDirections: Equatable, Sendable {
     public var directions: [UUID: Vector3]
     /// The derived compass offset, if any (for UI display).
     public var compassOffsetDeg: Double?
+    /// Where `compassOffsetDeg` came from.
+    public var compassOffsetSource: OffsetSource?
     /// The derived pitch bias (degrees, clamped), if any (for UI display).
     public var pitchBiasDeg: Double?
     /// Candidates in the room's device order (only devices with a direction).
     public var candidates: [TargetCandidate]
 
-    public init(room: Room, devices allDevices: [ControlledDevice]) {
+    /// Directions for `room`, with the house-wide fallback derived from `config`.
+    public init(room: Room, config: AppConfig) {
+        self.init(room: room, devices: config.devices, house: HouseCalibration(config: config))
+    }
+
+    public init(room: Room, devices allDevices: [ControlledDevice], house: HouseCalibration = .none) {
         let byID = Dictionary(allDevices.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let devices = room.deviceIDs.compactMap { byID[$0] }
-        let offset = Self.compassOffsetDeg(room: room, devices: devices)
-        let bias = Self.pitchBiasDeg(room: room, devices: devices) ?? 0
+        var offset = Self.compassOffsetDeg(room: room, devices: devices)
+        var source: OffsetSource? = offset == nil ? nil : .room
+        if offset == nil, let h = house.compassOffsetDeg(for: room) {
+            offset = h
+            source = .house
+        }
+        let bias = Self.pitchBiasDeg(room: room, devices: devices) ?? house.pitchBiasDeg ?? 0
 
         var dirs: [UUID: Vector3] = [:]
         var cands: [TargetCandidate] = []
@@ -57,6 +83,7 @@ public struct ReferenceDirections: Equatable, Sendable {
         }
         directions = dirs
         compassOffsetDeg = offset
+        compassOffsetSource = source
         pitchBiasDeg = offset == nil ? nil : bias
         candidates = cands
     }
@@ -64,7 +91,12 @@ public struct ReferenceDirections: Equatable, Sendable {
     /// Room-frame → world-frame yaw offset (deg, (−180, 180]) from taught devices
     /// that also have coordinates; nil if none (or no seat).
     public static func compassOffsetDeg(room: Room, devices: [ControlledDevice]) -> Double? {
-        guard let seat = room.seat else { return nil }
+        Angle.circularMeanDeg(offsetSamplesDeg(room: room, devices: devices)).map(Angle.normalizedDeg)
+    }
+
+    /// One offset sample per taught + placed device: yaw(taught) − yaw(coordinates − seat).
+    static func offsetSamplesDeg(room: Room, devices: [ControlledDevice]) -> [Double] {
+        guard let seat = room.seat else { return [] }
         var offsets: [Double] = []
         for d in devices {
             guard let t = d.taughtVector, let c = d.coordinates else { continue }
@@ -73,14 +105,18 @@ public struct ReferenceDirections: Equatable, Sendable {
             guard hypot(rel.x, rel.y) > 1e-6, hypot(t.x, t.y) > 1e-6 else { continue }
             offsets.append(Angle.normalizedDeg(t.yawDeg - rel.yawDeg))
         }
-        return Angle.circularMeanDeg(offsets).map(Angle.normalizedDeg)
+        return offsets
     }
 
     /// Pitch bias (deg, clamped to ±`maxPitchBiasDeg`) from taught devices that
     /// also have coordinates: mean(pitch(taught) − pitch(coordinates − seat)).
     /// nil if there is no such device (or no seat).
     public static func pitchBiasDeg(room: Room, devices: [ControlledDevice]) -> Double? {
-        guard let seat = room.seat else { return nil }
+        clampedMeanPitch(pitchSamplesDeg(room: room, devices: devices))
+    }
+
+    static func pitchSamplesDeg(room: Room, devices: [ControlledDevice]) -> [Double] {
+        guard let seat = room.seat else { return [] }
         var diffs: [Double] = []
         for d in devices {
             guard let t = d.taughtVector, !t.isZero, let c = d.coordinates else { continue }
@@ -88,6 +124,10 @@ public struct ReferenceDirections: Equatable, Sendable {
             guard !rel.isZero else { continue }
             diffs.append(t.pitchDeg - rel.pitchDeg)
         }
+        return diffs
+    }
+
+    static func clampedMeanPitch(_ diffs: [Double]) -> Double? {
         guard !diffs.isEmpty else { return nil }
         let mean = diffs.reduce(0, +) / Double(diffs.count)
         return min(maxPitchBiasDeg, max(-maxPitchBiasDeg, mean))
@@ -95,8 +135,9 @@ public struct ReferenceDirections: Equatable, Sendable {
 
     /// The zero-gesture anchor: `room.anchorDeviceID` if it has a direction,
     /// else the first taught device in room order. nil if neither exists.
-    public static func anchor(room: Room, devices: [ControlledDevice]) -> TargetCandidate? {
-        let refs = ReferenceDirections(room: room, devices: devices)
+    public static func anchor(room: Room, devices: [ControlledDevice],
+                              house: HouseCalibration = .none) -> TargetCandidate? {
+        let refs = ReferenceDirections(room: room, devices: devices, house: house)
         if let a = room.anchorDeviceID, let dir = refs.directions[a] {
             return TargetCandidate(id: a, direction: dir)
         }

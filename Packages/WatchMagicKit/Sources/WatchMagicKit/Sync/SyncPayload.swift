@@ -12,6 +12,9 @@ import Foundation
 /// | RelayStateRequest    | sendMessage (watch→phone)              | "relayStateRequest"|
 /// | RelayResponse        | sendMessage reply (phone→watch)        | "relayResponse"    |
 /// | motion trace CSV     | transferFile (watch→phone), metadata `SyncPayload.traceMetadata(...)` | "trace" |
+/// | TrainingStart        | sendMessage + reply (phone→watch; reply = TrainingStatus) | "trainingStart" |
+/// | TrainingCancel       | sendMessage (phone→watch)              | "trainingCancel"   |
+/// | TrainingStatus       | sendMessage (watch→phone), start reply | "trainingStatus"   |
 public enum SyncPayload {
 
     public enum Keys {
@@ -32,6 +35,10 @@ public enum SyncPayload {
         case relayStateRequest
         case relayResponse
         case trace
+        /// Gesture training, guided from the phone (the watch records).
+        case trainingStart
+        case trainingCancel
+        case trainingStatus
     }
 
     public enum SyncError: Error, Equatable, LocalizedError {
@@ -222,5 +229,120 @@ public struct RelayResponse: Codable, Equatable, Sendable {
     public init(dictionary d: [String: Any]) throws {
         try SyncPayload.checkKind(d, .relayResponse)
         self = try SyncPayload.decodeJSON(RelayResponse.self, d, key: SyncPayload.Keys.payload)
+    }
+}
+
+// MARK: - Gesture training (phone guides, watch records)
+
+/// Phone → watch: record one labelled training set now. The watch records
+/// from its first sample, fires its own cue haptics at
+/// `leadInS + i · cueIntervalS` (i < cueCount), and stops `tailS` after the
+/// last cue (uncued sets: after `durationS`). The reply is a `TrainingStatus`
+/// (`.accepted` or `.failed`).
+public struct TrainingStart: Codable, Equatable, Sendable {
+    public var sessionID: UUID
+    public var label: TrainingLabel
+    public var cueCount: Int
+    public var cueIntervalS: Double
+    public var leadInS: Double
+    public var tailS: Double
+    /// Length of an uncued set (label `none`).
+    public var durationS: Double
+
+    public init(sessionID: UUID = UUID(), label: TrainingLabel, plan: TrainingPlan = .standard) {
+        self.sessionID = sessionID
+        self.label = label
+        cueCount = label.isCued ? plan.cueCount : 0
+        cueIntervalS = plan.cueInterval
+        leadInS = plan.preRoll
+        tailS = plan.postRoll
+        durationS = plan.noneDuration
+    }
+
+    /// The plan the watch records with (values clamped to sane ranges).
+    public var plan: TrainingPlan {
+        var p = TrainingPlan()
+        p.cueCount = min(max(cueCount, 0), 50)
+        p.cueInterval = min(max(cueIntervalS, 0.5), 10)
+        p.preRoll = min(max(leadInS, 0), 10)
+        p.postRoll = min(max(tailS, 0), 10)
+        p.noneDuration = min(max(durationS, 1), 300)
+        return p
+    }
+
+    public func dictionary() throws -> [String: Any] {
+        [SyncPayload.Keys.kind: SyncPayload.Kind.trainingStart.rawValue,
+         SyncPayload.Keys.payload: try SyncPayload.encodeJSON(self)]
+    }
+
+    public init(dictionary d: [String: Any]) throws {
+        try SyncPayload.checkKind(d, .trainingStart)
+        self = try SyncPayload.decodeJSON(TrainingStart.self, d, key: SyncPayload.Keys.payload)
+    }
+}
+
+/// Phone → watch: stop the training recording (nothing is saved).
+public struct TrainingCancel: Codable, Equatable, Sendable {
+    public var sessionID: UUID
+
+    public init(sessionID: UUID) { self.sessionID = sessionID }
+
+    public func dictionary() throws -> [String: Any] {
+        [SyncPayload.Keys.kind: SyncPayload.Kind.trainingCancel.rawValue,
+         SyncPayload.Keys.payload: try SyncPayload.encodeJSON(self)]
+    }
+
+    public init(dictionary d: [String: Any]) throws {
+        try SyncPayload.checkKind(d, .trainingCancel)
+        self = try SyncPayload.decodeJSON(TrainingCancel.self, d, key: SyncPayload.Keys.payload)
+    }
+}
+
+/// Watch → phone: live progress of a training recording.
+public struct TrainingStatus: Codable, Equatable, Sendable {
+    public enum Phase: String, Codable, Sendable {
+        /// Start received; recording begins with the next motion sample.
+        case accepted
+        /// First sample recorded.
+        case recording
+        /// Cue `cueIndex` (0-based) fired on the watch.
+        case cue
+        /// Recording complete; CSV written.
+        case finished
+        /// CSV handed to WatchConnectivity (`fileName`).
+        case fileSent
+        case cancelled
+        case failed
+    }
+
+    public var sessionID: UUID
+    public var label: TrainingLabel
+    public var phase: Phase
+    public var cueIndex: Int?
+    public var cueTotal: Int?
+    public var samples: Int?
+    public var fileName: String?
+    public var message: String?
+
+    public init(sessionID: UUID, label: TrainingLabel, phase: Phase, cueIndex: Int? = nil, cueTotal: Int? = nil,
+                samples: Int? = nil, fileName: String? = nil, message: String? = nil) {
+        self.sessionID = sessionID
+        self.label = label
+        self.phase = phase
+        self.cueIndex = cueIndex
+        self.cueTotal = cueTotal
+        self.samples = samples
+        self.fileName = fileName
+        self.message = message
+    }
+
+    public func dictionary() throws -> [String: Any] {
+        [SyncPayload.Keys.kind: SyncPayload.Kind.trainingStatus.rawValue,
+         SyncPayload.Keys.payload: try SyncPayload.encodeJSON(self)]
+    }
+
+    public init(dictionary d: [String: Any]) throws {
+        try SyncPayload.checkKind(d, .trainingStatus)
+        self = try SyncPayload.decodeJSON(TrainingStatus.self, d, key: SyncPayload.Keys.payload)
     }
 }

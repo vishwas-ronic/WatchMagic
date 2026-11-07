@@ -1,10 +1,14 @@
+import Combine
 import SwiftUI
+import WatchMagicKit
 
 /// Navigation destinations pushed on top of the Aim screen.
 enum Route: Hashable {
     case teach
     case teachDevice(UUID)
     case probe
+    /// Phone-guided gesture-training recording.
+    case training
 }
 
 /// Owns the watch app's services (shared with the App Intent).
@@ -19,13 +23,53 @@ final class AppServices: ObservableObject {
 
     @Published var path: [Route] = []
 
+    private var cancellables: Set<AnyCancellable> = []
+
     private init() {
+        Diag.event("app_launch", ["version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                                  "build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String])
         motion = MotionService()
         sync = WatchSyncService()
         runtime = RuntimeSession()
         engine = ControlEngine(motion: motion, sync: sync)
         sync.activate()
         motion.start()
+        // Gesture training is guided from the iPhone; the watch just records.
+        sync.onTrainingStart = { [weak self] start in
+            guard let self else {
+                return TrainingStatus(sessionID: start.sessionID, label: start.label, phase: .failed, message: "Not ready")
+            }
+            self.keepAlive()
+            if self.path.last != .training { self.path.append(.training) }
+            return self.engine.startTraining(start)
+        }
+        sync.onTrainingCancel = { [weak self] id in self?.engine.cancelTraining(sessionID: id) }
+        runtime.$state
+            .removeDuplicates()
+            .sink { [weak self] state in
+                Diag.event("runtime_session", ["state": state.displayName,
+                                               "expires": self?.runtime.expirationDate,
+                                               "restarts": self?.runtime.restartCount])
+            }
+            .store(in: &cancellables)
+        motion.$status
+            .map { MotionKey(running: $0.isRunning, source: $0.source.rawValue, ready: $0.headingReady) }
+            .removeDuplicates()
+            .sink { k in Diag.event("motion_state", ["running": k.running, "headingSource": k.source, "headingReady": k.ready]) }
+            .store(in: &cancellables)
+    }
+
+    private struct MotionKey: Equatable {
+        var running: Bool
+        var source: String
+        var ready: Bool
+    }
+
+    /// Any WatchMagic screen (Aim, Teach, Sensor Probe) visible: keep motion
+    /// streaming and the extended runtime session alive.
+    func keepAlive() {
+        motion.start()
+        runtime.start(userInitiated: true)
     }
 
     /// App Intent / Action button: back to the Aim screen and start aiming.
@@ -38,7 +82,7 @@ final class AppServices: ObservableObject {
 
     func becameActive() {
         motion.refreshWearing()
-        motion.start()
+        keepAlive()
     }
 }
 
@@ -57,7 +101,9 @@ struct WatchMagicWatchApp: App {
                 .environmentObject(services.runtime)
         }
         .onChange(of: scenePhase) { _, phase in
+            Diag.event("scene_phase", ["phase": "\(phase)"])
             if phase == .active { services.becameActive() }
+            if phase == .background { Diag.shared.flush() }
         }
     }
 }
@@ -73,6 +119,7 @@ struct RootView: View {
                     case .teach: TeachView()
                     case .teachDevice(let id): TeachDeviceView(deviceID: id)
                     case .probe: SensorProbeView()
+                    case .training: TrainingRecordingView()
                     }
                 }
         }

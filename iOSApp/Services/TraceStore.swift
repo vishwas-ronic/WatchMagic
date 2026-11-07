@@ -1,7 +1,9 @@
 import Foundation
+import WatchMagicKit
 
-/// Motion-trace CSV files received from the watch (Sensor Probe → Record),
-/// kept in Documents/Traces/ so they can be shared/exported from Settings.
+/// Files received from the watch: motion traces / diag logs (Sensor Probe)
+/// in Documents/Traces/, and gesture-training CSVs (`train-<label>-….csv`)
+/// in Documents/Training/, so they can be shared/exported from Settings.
 @MainActor
 final class TraceStore: ObservableObject {
     struct TraceFile: Identifiable, Hashable {
@@ -13,6 +15,7 @@ final class TraceStore: ObservableObject {
     }
 
     @Published private(set) var traces: [TraceFile] = []
+    @Published private(set) var training: [TraceFile] = []
 
     nonisolated static var directory: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
@@ -20,13 +23,22 @@ final class TraceStore: ObservableObject {
         return docs.appendingPathComponent("Traces", isDirectory: true)
     }
 
+    nonisolated static var trainingDirectory: URL {
+        directory.deletingLastPathComponent().appendingPathComponent("Training", isDirectory: true)
+    }
+
     init() { refresh() }
 
     func refresh() {
-        let fm = FileManager.default
+        traces = Self.list(Self.directory)
+        training = Self.list(Self.trainingDirectory)
+    }
+
+    private static func list(_ dir: URL) -> [TraceFile] {
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
-        let urls = (try? fm.contentsOfDirectory(at: Self.directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
-        traces = urls.compactMap { url in
+        let urls = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys,
+                                                                 options: [.skipsHiddenFiles])) ?? []
+        return urls.compactMap { url in
             let v = try? url.resourceValues(forKeys: Set(keys))
             return TraceFile(url: url, size: Int64(v?.fileSize ?? 0), date: v?.contentModificationDate ?? .distantPast)
         }
@@ -43,11 +55,12 @@ final class TraceStore: ObservableObject {
     /// `session(_:didReceive:)` — WatchConnectivity deletes the file afterwards.
     nonisolated static func importFile(at source: URL, preferredName: String?) throws -> URL {
         let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         // Only the last path component is trusted (no directory traversal).
         var name = (preferredName.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "")
         if name.isEmpty || name == "." || name == ".." { name = source.lastPathComponent }
         if name.isEmpty { name = "trace-\(Int(Date().timeIntervalSince1970)).csv" }
+        let directory = TrainingRecorder.isTrainingFile(name) ? trainingDirectory : directory
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
 
         var dest = directory.appendingPathComponent(name)
         let base = dest.deletingPathExtension().lastPathComponent

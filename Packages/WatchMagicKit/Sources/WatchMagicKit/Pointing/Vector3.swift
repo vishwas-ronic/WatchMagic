@@ -19,6 +19,10 @@ import Foundation
 // y = north, z = up; or x = along a wall, y = 90° to its left, z = up). The
 // compass offset (see ReferenceDirections) rotates the room frame about z into
 // the world frame.
+//
+// HOUSE FRAME (Home Assistant's 3D house model): x = plan right, y = plan
+// DOWN, z = up — LEFT-handed. Room → house needs a reflection; see
+// `HouseModel.swift` and `HouseAlignment`.
 
 /// A 3-component vector of Doubles. Used for directions, positions (metres),
 /// rotation rates (rad/s) and gravity (g).

@@ -5,10 +5,16 @@ import WatchMagicKit
 /// "Place devices with camera": full-screen AR. Aim the centre square at a
 /// device and tap Place; sit in your seat and tap Set my seat; Save writes the
 /// seat and device coordinates (room frame) in one config update.
+///
+/// "Align to house" (rooms matched to a space of HA's house model): pick two
+/// corners on the space outline, aim at each where the walls meet the floor
+/// and tap Mark. The alignment (room frame → house frame) is saved with the
+/// placement and follows the same frame rule (`RoomPlacement`).
 struct PlacementView: View {
     let roomID: UUID
 
     @EnvironmentObject private var store: ConfigStore
+    @EnvironmentObject private var house: HouseService
     @Environment(\.dismiss) private var dismiss
     @StateObject private var session: PlacementSession
 
@@ -18,6 +24,12 @@ struct PlacementView: View {
     @State private var confirmDiscard = false
     @State private var saving = false
     @State private var mapWarning: String?
+    /// Showing the "Align to house" panel.
+    @State private var aligning = false
+    /// Chosen corner indices (into `corners`) for A and B.
+    @State private var cornerSel: [Int] = []
+    /// Slot (0 = A, 1 = B) the next Mark / corner tap applies to.
+    @State private var activeSlot = 0
 
     init(roomID: UUID, devices: [ControlledDevice], existingSeat: Vector3?) {
         self.roomID = roomID
@@ -47,13 +59,14 @@ struct PlacementView: View {
         .onAppear {
             session.start()
             if selectedID == nil { selectedID = nextUnplaced(after: nil) }
+            if cornerSel.isEmpty, let (i, j) = PlanPolygon.farthestPair(corners) { cornerSel = [i, j] }
         }
         .onDisappear { session.stop() }
-        .confirmationDialog(staleTitle, isPresented: $confirmStale, titleVisibility: .visible) {
-            Button("Save and clear them", role: .destructive) { Task { await save() } }
+        .confirmationDialog(staleIDs.isEmpty ? "Save anyway?" : staleTitle, isPresented: $confirmStale, titleVisibility: .visible) {
+            Button(staleIDs.isEmpty ? "Save" : "Save and clear them", role: .destructive) { Task { await save() } }
             Button("Keep placing", role: .cancel) {}
         } message: {
-            Text("\(staleNames). They were placed in an earlier session this one couldn't match, so their old positions would point the wrong way. Their coordinates will be cleared.")
+            Text(saveWarnings.joined(separator: "\n\n"))
         }
         .confirmationDialog("Discard this session's placements?", isPresented: $confirmDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { dismiss() }
@@ -120,6 +133,9 @@ struct PlacementView: View {
                 banner("New map: \(staleIDs.count) device\(staleIDs.count == 1 ? "" : "s") placed earlier will need re-placing.",
                        symbol: "info.circle.fill", color: .orange)
             }
+            if clearsAlignment {
+                banner("New map: the house alignment must be redone (Align to house).", symbol: "house", color: .orange)
+            }
             if let msg = session.trackingMessage {
                 banner(msg, symbol: "camera.metering.unknown", color: .yellow)
             }
@@ -140,7 +156,16 @@ struct PlacementView: View {
 
     // MARK: - Bottom
 
+    @ViewBuilder
     private var bottomPanel: some View {
+        if aligning, let space {
+            alignPanel(space)
+        } else {
+            placePanel
+        }
+    }
+
+    private var placePanel: some View {
         VStack(spacing: 10) {
             Text(distanceText)
                 .font(.callout.monospacedDigit().weight(.semibold))
@@ -194,9 +219,99 @@ struct PlacementView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+
+            if space != nil {
+                Button {
+                    aligning = true
+                } label: {
+                    Label(alignButtonTitle, systemImage: "house")
+                        .font(.footnote.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(alignmentNow?.fitIsPoor == true ? .orange : .accentColor)
+                .disabled(!session.canPlace)
+            }
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    // MARK: - Align to house
+
+    private func alignPanel(_ space: HouseModel.Space) -> some View {
+        let slotName = activeSlot == 0 ? "A" : "B"
+        return VStack(spacing: 10) {
+            HStack {
+                Text("Align to \(space.displayName)").font(.headline)
+                Spacer()
+                Button("Done") { aligning = false }
+                    .font(.headline)
+            }
+            HouseOutlineView(polygon: space.poly, corners: corners, selected: cornerSel,
+                             marked: Set(cornerSel.indices.filter { session.cornerMarks[$0] != nil }.map { cornerSel[$0] })) { i in
+                chooseCorner(i)
+            }
+            .frame(height: 150)
+
+            Picker("Corner", selection: $activeSlot) {
+                Text(session.cornerMarks[0] == nil ? "Corner A" : "Corner A ✓").tag(0)
+                Text(session.cornerMarks[1] == nil ? "Corner B" : "Corner B ✓").tag(1)
+            }
+            .pickerStyle(.segmented)
+
+            Button {
+                markCorner()
+            } label: {
+                Label("Mark corner \(slotName)", systemImage: "scope").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(!session.canPlace || cornerSel.count < 2)
+
+            if let a = alignmentNow {
+                Label(String(format: a.fitIsPoor
+                             ? "Fit error %.2f m — a corner may be wrong. Check A/B on the outline and re-mark."
+                             : "Fit error %.2f m ✓ — saved with the placements.", a.fitErrorM),
+                      systemImage: a.fitIsPoor ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                    .font(.caption)
+                    .foregroundStyle(a.fitIsPoor ? .orange : .green)
+            } else {
+                Text(missHint ?? "Tap a dot on the outline to choose corner \(slotName), then aim the square where those two walls meet the floor and tap Mark. Far-apart corners work best.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func chooseCorner(_ i: Int) {
+        guard cornerSel.count == 2 else { return }
+        let other = 1 - activeSlot
+        if cornerSel[other] == i {
+            // Swap A and B (marks are physical points: clear both).
+            cornerSel.swapAt(0, 1)
+            session.clearCorner(slot: 0)
+            session.clearCorner(slot: 1)
+        } else if cornerSel[activeSlot] != i {
+            cornerSel[activeSlot] = i
+            session.clearCorner(slot: activeSlot)
+        }
+    }
+
+    private func markCorner() {
+        if session.markCorner(slot: activeSlot) {
+            missHint = nil
+            if session.cornerMarks[1 - activeSlot] == nil { activeSlot = 1 - activeSlot }
+        } else {
+            missHint = "Move closer / aim at the floor corner"
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                missHint = nil
+            }
+        }
     }
 
     private var devicePicker: some View {
@@ -254,6 +369,47 @@ struct PlacementView: View {
 
     private var staleIDs: [UUID] { session.makePlacement().staleDeviceIDs(in: store.config) }
 
+    /// The room's house space, if chosen and present in the loaded model.
+    private var space: HouseModel.Space? { room.flatMap { house.space(for: $0) } }
+
+    /// Corner candidates of the space (chamfers collapsed).
+    private var corners: [PlanPoint] { space.map { PlanPolygon.corners($0.poly) } ?? [] }
+
+    /// Alignment from this session's two marks, if both are set.
+    private var alignmentNow: HouseAlignment? {
+        guard let space, cornerSel.count == 2, let model = house.houseModel,
+              corners.indices.contains(cornerSel[0]), corners.indices.contains(cornerSel[1]) else { return nil }
+        return session.houseAlignment(spaceID: space.id, corners: (corners[cornerSel[0]], corners[cornerSel[1]]),
+                                      floorLevel: model.floorLevel(of: space))
+    }
+
+    private var clearsAlignment: Bool {
+        session.makePlacement(houseAlignment: alignmentNow).clearsHouseAlignment(in: store.config)
+    }
+
+    private var alignButtonTitle: String {
+        if let a = alignmentNow { return String(format: "Aligned to house (fit %.2f m)", a.fitErrorM) }
+        if session.sameFrame, let a = room?.houseAlignmentIfValid {
+            return String(format: "Aligned earlier (fit %.2f m) — re-align", a.fitErrorM)
+        }
+        return "Align to house"
+    }
+
+    private var saveWarnings: [String] {
+        var w: [String] = []
+        if !staleIDs.isEmpty {
+            w.append("\(staleNames). They were placed in an earlier session this one couldn't match, so their old positions would point the wrong way. Their coordinates will be cleared.")
+        }
+        if clearsAlignment {
+            w.append("The house alignment belongs to the old map and will be cleared. Use Align to house to redo it.")
+        }
+        if let a = alignmentNow, a.fitIsPoor {
+            w.append(String(format: "The house alignment's fit error is %.2f m (over %.2f m): a corner was probably mismatched.",
+                            a.fitErrorM, HouseAlignment.fitWarningM))
+        }
+        return w
+    }
+
     private var staleTitle: String {
         let n = staleIDs.count
         return "\(n) device\(n == 1 ? "" : "s") placed earlier will need re-placing"
@@ -306,7 +462,7 @@ struct PlacementView: View {
     }
 
     private func attemptSave() {
-        if staleIDs.isEmpty {
+        if saveWarnings.isEmpty {
             Task { await save() }
         } else {
             confirmStale = true
@@ -315,11 +471,15 @@ struct PlacementView: View {
 
     private func save() async {
         guard !saving else { return }
-        let placement = session.makePlacement()
+        let placement = session.makePlacement(houseAlignment: alignmentNow)
         guard placement.canSave(in: store.config) else { return }
         saving = true
         let warning = await session.saveWorldMap()
         store.update { placement.apply(to: &$0) } // one update → one sync push
+        // Send the house-frame positions to HA's 3D view (result shows in the room screen).
+        if let r = store.config.room(id: roomID), r.houseAlignmentIfValid != nil, store.hasToken {
+            house.pushInBackground()
+        }
         saving = false
         if let warning {
             mapWarning = warning

@@ -130,6 +130,27 @@ public struct HAClient: Sendable {
         return try decode([EntityState].self, from: data)
     }
 
+    // MARK: - House model (3D view)
+
+    /// Path of HA's whole-house model (public static file under /config/www).
+    public static let houseModelPath = "local/house3d/house.json"
+
+    /// `GET /local/house3d/house.json` → the house model. 404 → `.noHouseModel`.
+    public func houseModel() async throws -> HouseModel {
+        let data: Data
+        do {
+            data = try await send(makeRequest(path: Self.houseModelPath, method: "GET"))
+        } catch HAError.http(status: 404, _) {
+            throw HAError.noHouseModel
+        }
+        return try decode(HouseModel.self, from: data)
+    }
+
+    /// `POST /api/states/sensor.watchmagic_layout` with a `HouseLayout` body.
+    public func postLayout(_ body: Data) async throws {
+        _ = try await send(makeRequest(path: "api/states/\(HouseLayout.sensorEntityID)", method: "POST", body: body))
+    }
+
     // MARK: - Plumbing
 
     /// Builds a request (exposed for tests / the phone relay).

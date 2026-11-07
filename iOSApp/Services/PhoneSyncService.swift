@@ -23,6 +23,8 @@ final class PhoneSyncService: NSObject, ObservableObject {
     @Published private(set) var lastError: String?
     /// Last taught-vector or trace received from the watch.
     @Published private(set) var lastReceivedAt: Date?
+    /// Latest gesture-training progress from the watch.
+    @Published private(set) var lastTrainingStatus: TrainingStatus?
 
     private weak var store: ConfigStore?
     private weak var traceStore: TraceStore?
@@ -256,10 +258,78 @@ extension PhoneSyncService: WCSessionDelegate {
         }
     }
 
-    // Messages without a reply handler: only a config request makes sense.
+    // Messages without a reply handler: a config request, or training progress.
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        if SyncPayload.kind(of: message) == .config {
+        switch SyncPayload.kind(of: message) {
+        case .config:
             Task { @MainActor in self.pushNow() }
+        case .trainingStatus:
+            if let st = try? TrainingStatus(dictionary: message) {
+                Task { @MainActor in self.lastTrainingStatus = st }
+            }
+        default:
+            break
         }
+    }
+
+    // MARK: - Gesture training (phone guides, watch records)
+
+    enum TrainingSendError: LocalizedError {
+        case watchUnreachable
+        case badReply
+        case timeout
+        case failed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .watchUnreachable: return "Open WatchMagic on your watch (keep it on the Aim screen)"
+            case .badReply: return "Unexpected reply from the watch"
+            case .timeout: return "The watch didn't answer"
+            case .failed(let m): return m
+            }
+        }
+    }
+
+    var isWatchReachable: Bool {
+        WCSession.isSupported() && WCSession.default.activationState == .activated && WCSession.default.isReachable
+    }
+
+    /// Asks the watch to record one training set; returns its `.accepted` status.
+    func startTraining(_ start: TrainingStart, timeout: TimeInterval = 5) async throws -> TrainingStatus {
+        guard isWatchReachable else { throw TrainingSendError.watchUnreachable }
+        let dict = try start.dictionary()
+        let status: TrainingStatus = try await withCheckedThrowingContinuation { cont in
+            let once = TrainingOnce(cont)
+            WCSession.default.sendMessage(dict, replyHandler: { reply in
+                if let st = try? TrainingStatus(dictionary: reply) { once.resume(.success(st)) }
+                else { once.resume(.failure(TrainingSendError.badReply)) }
+            }, errorHandler: { error in
+                once.resume(.failure(error))
+            })
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { once.resume(.failure(TrainingSendError.timeout)) }
+        }
+        if status.phase == .failed { throw TrainingSendError.failed(status.message ?? "The watch couldn't start recording") }
+        return status
+    }
+
+    func cancelTraining(sessionID: UUID) {
+        guard isWatchReachable, let dict = try? TrainingCancel(sessionID: sessionID).dictionary() else { return }
+        WCSession.default.sendMessage(dict, replyHandler: nil, errorHandler: nil)
+    }
+}
+
+/// Resumes a continuation once (reply, error or timeout — whichever is first).
+private final class TrainingOnce: @unchecked Sendable {
+    private var continuation: CheckedContinuation<TrainingStatus, Error>?
+    private let lock = NSLock()
+
+    init(_ c: CheckedContinuation<TrainingStatus, Error>) { continuation = c }
+
+    func resume(_ result: Result<TrainingStatus, Error>) {
+        lock.lock()
+        let c = continuation
+        continuation = nil
+        lock.unlock()
+        c?.resume(with: result)
     }
 }

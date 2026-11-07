@@ -5,6 +5,7 @@ struct WatchMagicApp: App {
     @StateObject private var store: ConfigStore
     @StateObject private var traces: TraceStore
     @StateObject private var sync: PhoneSyncService
+    @StateObject private var house: HouseService
 
     init() {
         let store = ConfigStore()
@@ -13,6 +14,7 @@ struct WatchMagicApp: App {
         _store = StateObject(wrappedValue: store)
         _traces = StateObject(wrappedValue: traces)
         _sync = StateObject(wrappedValue: sync)
+        _house = StateObject(wrappedValue: HouseService(store: store))
     }
 
     var body: some Scene {
@@ -21,6 +23,7 @@ struct WatchMagicApp: App {
                 .environmentObject(store)
                 .environmentObject(traces)
                 .environmentObject(sync)
+                .environmentObject(house)
                 .tint(Color("AccentColor"))
         }
     }

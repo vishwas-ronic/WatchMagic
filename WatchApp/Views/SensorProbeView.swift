@@ -8,6 +8,7 @@ struct SensorProbeView: View {
     @EnvironmentObject private var motion: MotionService
     @EnvironmentObject private var sync: WatchSyncService
     @EnvironmentObject private var runtime: RuntimeSession
+    @EnvironmentObject private var services: AppServices
 
     var body: some View {
         let m = motion.status
@@ -16,6 +17,11 @@ struct SensorProbeView: View {
         List {
             Section("Record") {
                 recordButton
+                Button("Send last 60 s") { engine.sendLastMinute() }
+                Button("Send diag log") { engine.sendDiagLog() }
+                if let status = engine.dumpStatus {
+                    Text(status).font(.caption2).foregroundStyle(.secondary)
+                }
                 if let status = sync.traceStatus {
                     Text(status).font(.caption2).foregroundStyle(.secondary)
                 }
@@ -98,6 +104,7 @@ struct SensorProbeView: View {
             }
         }
         .navigationTitle("Sensor Probe")
+        .onAppear { services.keepAlive() }
     }
 
     // MARK: - Pieces

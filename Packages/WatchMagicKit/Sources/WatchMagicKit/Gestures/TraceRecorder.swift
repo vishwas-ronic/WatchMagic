@@ -19,6 +19,19 @@ public struct TraceRecorder: Sendable {
         return s.t - start! >= duration
     }
 
+    /// Default gap after which a recording counts as stalled (app suspended).
+    public static let maxGap: TimeInterval = 1
+
+    /// Timestamp of the last sample, if any.
+    public var lastSampleTime: TimeInterval? { samples.last?.t }
+
+    /// True if a sample at `t` comes more than `maxGap` after the previous one
+    /// (motion stopped, e.g. the app was suspended): the recording should end.
+    public func isStalled(at t: TimeInterval, maxGap: TimeInterval = TraceRecorder.maxGap) -> Bool {
+        guard let last = lastSampleTime else { return false }
+        return t - last > maxGap
+    }
+
     public func remaining(at t: TimeInterval) -> TimeInterval {
         guard let start else { return duration }
         return max(0, duration - (t - start))

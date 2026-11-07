@@ -74,6 +74,20 @@ struct SettingsView: View {
                     .disabled(s == Settings())
             }
 
+            HouseSettingsSection()
+
+            Section {
+                NavigationLink {
+                    GestureTrainingView()
+                } label: {
+                    Label("Train gestures", systemImage: "hand.point.up.left.and.text")
+                }
+            } footer: {
+                Text("Records labelled flicks and twists on the watch (guided from here) for a trained gesture model.")
+            }
+
+            trainingSection
+
             tracesSection
         }
         .navigationTitle("Settings")
@@ -81,6 +95,46 @@ struct SettingsView: View {
         .onAppear { traces.refresh() }
         .confirmationDialog("Reset all tuning settings to their defaults?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { store.resetSettings() }
+        }
+    }
+
+    private var trainingSection: some View {
+        Section {
+            if traces.training.isEmpty {
+                Text("No training data yet. Use Train gestures.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(traces.training) { file in
+                fileRow(file)
+            }
+            .onDelete { offsets in
+                traces.delete(offsets.map { traces.training[$0] })
+            }
+            if traces.training.count > 1 {
+                ShareLink(items: traces.training.map(\.url)) {
+                    Label("Share all training data", systemImage: "square.and.arrow.up.on.square")
+                }
+            }
+        } header: {
+            Text("Training data")
+        } footer: {
+            Text("train-<label>-<time>.csv from the watch (comment header: label, cue times, wrist, rate). Swipe to delete.")
+        }
+    }
+
+    private func fileRow(_ file: TraceStore.TraceFile) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(file.name).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
+                Text("\(file.date.formatted(date: .abbreviated, time: .shortened)) · \(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            ShareLink(item: file.url) {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .buttonStyle(.borderless)
         }
     }
 

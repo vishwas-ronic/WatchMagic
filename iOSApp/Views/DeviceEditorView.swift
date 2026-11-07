@@ -94,12 +94,24 @@ struct DeviceEditorView: View {
 
             Section {
                 OptionalVectorField(value: device.coordinates) { v in
-                    store.updateDevice(device.id) { $0.coordinates = v }
+                    store.updateDevice(device.id) {
+                        $0.coordinates = v
+                        $0.coordinatesSource = v == nil ? nil : .manual
+                    }
+                }
+                Picker("Mount", selection: Binding(
+                    get: { device.mount },
+                    set: { m in store.updateDevice(device.id) { $0.mount = m } }
+                )) {
+                    Text("Unknown").tag(DeviceMount?.none)
+                    ForEach(DeviceMount.allCases, id: \.self) { m in
+                        Text(m.rawValue.capitalized).tag(DeviceMount?.some(m))
+                    }
                 }
             } header: {
                 Text("Coordinates (m)")
             } footer: {
-                Text("Optional. Position in the same frame as the room's seat. “Place devices with camera” in the room replaces typed coordinates.")
+                Text("Optional. Position in the same frame as the room's seat. “Place devices with camera” in the room replaces typed coordinates and sets the mount from the surface.")
             }
 
             Section {
