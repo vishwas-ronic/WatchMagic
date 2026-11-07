@@ -64,7 +64,9 @@ targets:
             CFBundleURLSchemes: [watchmagic]
         WKApplication: true
         WKCompanionAppBundleIdentifier: ai.ronic.watchmagic
-        WKBackgroundModes: [physical-therapy]
+        WKBackgroundModes: [physical-therapy, workout-processing]
+        NSHealthShareUsageDescription: WatchMagic runs as an indoor workout session so it can keep listening for your gestures. It does not read your health data.
+        NSHealthUpdateUsageDescription: WatchMagic runs as an indoor workout session so it can keep listening for your gestures. It does not save workouts.
         NSMotionUsageDescription: WatchMagic reads wrist motion to know where you are pointing and to detect flick gestures.
         NSLocationWhenInUseUsageDescription: WatchMagic uses the compass heading to know which direction you are pointing.
         NSAppTransportSecurity:
@@ -73,6 +75,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.ronic.watchmagic.watchkitapp
         TARGETED_DEVICE_FAMILY: "4"
+    entitlements:
+      path: WatchApp/WatchApp.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
 
   # Watch-face complication / Smart Stack widget: tap → watchmagic://aim.
   WatchMagic Widgets:

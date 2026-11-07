@@ -19,6 +19,7 @@ final class AppServices: ObservableObject {
     let motion: MotionService
     let sync: WatchSyncService
     let runtime: RuntimeSession
+    let alwaysOn = AlwaysOnSession()
     let engine: ControlEngine
 
     @Published var path: [Route] = []
@@ -52,6 +53,19 @@ final class AppServices: ObservableObject {
                                                "restarts": self?.runtime.restartCount])
             }
             .store(in: &cancellables)
+        // Follow the iPhone's "Always listening" switch.
+        engine.$config
+            .compactMap { $0?.settings.alwaysListening }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.keepAlive() }
+            .store(in: &cancellables)
+        alwaysOn.$state
+            .removeDuplicates()
+            .sink { s in Diag.event("always_on_state", ["state": s.displayName]) }
+            .store(in: &cancellables)
+        // Launch straight into listening (no tap needed).
+        keepAlive()
         motion.$status
             .map { MotionKey(running: $0.isRunning, source: $0.source.rawValue, ready: $0.headingReady) }
             .removeDuplicates()
@@ -69,7 +83,19 @@ final class AppServices: ObservableObject {
     /// streaming and the extended runtime session alive.
     func keepAlive() {
         motion.start()
-        runtime.start(userInitiated: true)
+        startSession()
+    }
+
+    /// Always listening (workout session, no time limit) unless turned off in
+    /// iPhone Settings; then the 1-hour extended runtime session.
+    private func startSession() {
+        if engine.config?.settings.alwaysListening ?? Settings().alwaysListening {
+            if runtime.state == .running || runtime.state == .starting { runtime.stop() }
+            alwaysOn.start()
+        } else {
+            if alwaysOn.isActive { alwaysOn.stop() }
+            runtime.start(userInitiated: true)
+        }
     }
 
     /// App Intent / Action button: back to the Aim screen and start aiming.
@@ -77,7 +103,7 @@ final class AppServices: ObservableObject {
         path = []
         motion.refreshWearing()
         motion.start()
-        runtime.start(userInitiated: true)
+        startSession()
     }
 
     func becameActive() {

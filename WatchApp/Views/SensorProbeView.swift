@@ -98,6 +98,7 @@ struct SensorProbeView: View {
                 row("Token", sync.hasToken ? "Stored" : "Missing")
                 row("Unsynced teach", "\(sync.pendingTaughtIDs.count)")
                 row("Runtime", runtime.state.displayName)
+                row("Always on", services.alwaysOn.state.displayName)
                 if let error = sync.lastError {
                     Text(error).font(.caption2).foregroundStyle(.orange)
                 }

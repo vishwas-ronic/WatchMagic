@@ -36,6 +36,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSHealthShareUsageDescription</key>
+	<string>WatchMagic runs as an indoor workout session so it can keep listening for your gestures. It does not read your health data.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>WatchMagic runs as an indoor workout session so it can keep listening for your gestures. It does not save workouts.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>WatchMagic uses the compass heading to know which direction you are pointing.</string>
 	<key>NSMotionUsageDescription</key>
@@ -45,6 +49,7 @@
 	<key>WKBackgroundModes</key>
 	<array>
 		<string>physical-therapy</string>
+		<string>workout-processing</string>
 	</array>
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>ai.ronic.watchmagic</string>

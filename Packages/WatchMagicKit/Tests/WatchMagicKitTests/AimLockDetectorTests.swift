@@ -110,6 +110,7 @@ final class ModelAndSyncTests: XCTestCase {
         XCTAssertNil(cfg.settings.fanStepPct)
         XCTAssertEqual(cfg.settings.aimToleranceDeg, 15)
         XCTAssertFalse(cfg.settings.flicksEnabled)
+        XCTAssertTrue(cfg.settings.alwaysListening)
         XCTAssertEqual(cfg.settings.ambiguityMarginDeg, 5)
         XCTAssertEqual(cfg.settings.aimHoldMs, 300)
         XCTAssertEqual(cfg.settings.gestureWindowS, 1.5)

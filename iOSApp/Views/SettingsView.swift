@@ -35,6 +35,7 @@ struct SettingsView: View {
                     }
                 }
                 Toggle("Flick down at minimum turns off", isOn: binding(\.flickDownAtMinimumTurnsOff))
+                Toggle("Always listening on the watch", isOn: binding(\.alwaysListening))
             } header: {
                 Text("Actions")
             } footer: {
