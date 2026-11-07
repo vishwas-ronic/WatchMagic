@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import WatchKit
 import WatchMagicKit
 
 /// Navigation destinations pushed on top of the Aim screen.
@@ -40,7 +41,7 @@ final class AppServices: ObservableObject {
             guard let self else {
                 return TrainingStatus(sessionID: start.sessionID, label: start.label, phase: .failed, message: "Not ready")
             }
-            self.keepAlive()
+            self.keepAlive(evenInBackground: true)
             if self.path.last != .training { self.path.append(.training) }
             return self.engine.startTraining(start)
         }
@@ -79,31 +80,48 @@ final class AppServices: ObservableObject {
         var ready: Bool
     }
 
-    /// Any WatchMagic screen (Aim, Teach, Sensor Probe) visible: keep motion
-    /// streaming and the extended runtime session alive.
-    func keepAlive() {
-        motion.start()
-        startSession()
+    private var alwaysListening: Bool {
+        engine.config?.settings.alwaysListening ?? Settings().alwaysListening
     }
 
-    /// Always listening (workout session, no time limit) unless turned off in
-    /// iPhone Settings; then the 1-hour extended runtime session.
-    private func startSession() {
-        if engine.config?.settings.alwaysListening ?? Settings().alwaysListening {
+    /// Listening on: Always listening → workout session (no time limit, works
+    /// from the watch face). Off → only while WatchMagic is on screen (incl.
+    /// dimmed with the wrist down); back on the watch face it stops.
+    /// `evenInBackground`: phone-guided training records with the screen off.
+    func keepAlive(evenInBackground: Bool = false) {
+        if alwaysListening {
             if runtime.state == .running || runtime.state == .starting { runtime.stop() }
+            motion.start()
             alwaysOn.start()
+            return
+        }
+        if alwaysOn.isActive { alwaysOn.stop() }
+        if !evenInBackground, WKApplication.shared().applicationState == .background {
+            stopListening()
         } else {
-            if alwaysOn.isActive { alwaysOn.stop() }
+            // The runtime session keeps frames coming with the wrist down while
+            // WatchMagic is still the app on screen; it is ended on the watch face.
+            motion.start()
             runtime.start(userInitiated: true)
         }
+    }
+
+    /// Always listening off and back on the watch face: no motion, no session.
+    private func stopListening() {
+        if runtime.state == .running || runtime.state == .starting { runtime.stop() }
+        if motion.status.isRunning { motion.stop() }
+        Diag.event("listening", ["state": "off", "why": "background, always listening off"])
+    }
+
+    func enteredBackground() {
+        if !alwaysListening, engine.training == nil || engine.training?.done == true { stopListening() }
     }
 
     /// App Intent / Action button: back to the Aim screen and start aiming.
     func startAiming() {
         path = []
         motion.refreshWearing()
-        motion.start()
-        startSession()
+        keepAlive()
     }
 
     func becameActive() {
@@ -129,7 +147,10 @@ struct WatchMagicWatchApp: App {
         .onChange(of: scenePhase) { _, phase in
             Diag.event("scene_phase", ["phase": "\(phase)"])
             if phase == .active { services.becameActive() }
-            if phase == .background { Diag.shared.flush() }
+            if phase == .background {
+                services.enteredBackground()
+                Diag.shared.flush()
+            }
         }
     }
 }

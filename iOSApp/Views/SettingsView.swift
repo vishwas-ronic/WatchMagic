@@ -39,7 +39,7 @@ struct SettingsView: View {
             } header: {
                 Text("Actions")
             } footer: {
-                Text("With \"entity default\", each fan uses its own percentage_step.")
+                Text("With \"entity default\", each fan uses its own percentage_step. Always listening: pointing + twist works from the watch face (uses more battery). Off: only while WatchMagic is open on the watch.")
             }
 
             Section {
