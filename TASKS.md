@@ -3,7 +3,7 @@
 Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-device verification (needs the watch on a wrist / signing)
 
 ## 0. Setup
-- [x] git repo on `main` — no remote configured, so "pull" was a no-op and "push" = commits on local `main`
+- [x] git repo on `main`, remote `origin` = github.com/vishwas-ronic/WatchMagic (added 2026-11-07; before that there was no remote and commits stayed local)
 - [x] XcodeGen installed (2.46.0)
 - [x] HA reachable with token: `GET /api/` → 200, bad token → 401, areas template works (curl from the Mac)
 - [x] Signing team found in Xcode prefs/profiles: G93232N59R; iPhone 16 Pro Max + Apple Watch Ultra paired & `available`
