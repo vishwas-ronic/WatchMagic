@@ -100,6 +100,8 @@ final class ControlPipeline: @unchecked Sendable {
     /// Mean pointing while steady on the current lock (aim learning).
     private var lockPointing = PointingAverage()
     private var learnedThisLock = false
+    /// Devices rotate-and-hold can step (dimmable lights, fans).
+    private var adjustableIDs: Set<UUID> = []
     /// Phone-guided gesture-training recording in progress.
     private var trainer: (start: TrainingStart, recorder: TrainingRecorder, wearing: WearingInfo)?
     private var snap = AimSnapshot()
@@ -123,9 +125,10 @@ final class ControlPipeline: @unchecked Sendable {
     // MARK: Commands (any thread → queue)
 
     func configure(candidates: [TargetCandidate], anchor: TargetCandidate?, settings: Settings, resetLock: Bool,
-                   names: [UUID: String]) {
+                   names: [UUID: String], adjustableIDs: Set<UUID>) {
         queue.async { [self] in
             self.names = names
+            self.adjustableIDs = adjustableIDs
             self.candidates = candidates
             self.anchor = anchor
             self.settings = settings
@@ -348,11 +351,18 @@ final class ControlPipeline: @unchecked Sendable {
         // Rotate and hold (brightness / fan speed) while locked.
         if canAim, let lock = aimLock.lock {
             if k.angularSpeed < 0.6, !knob.isEngaged { lockPointing.add(f.pointing) }
-            switch knob.update(t: t, gravity: f.sample.gravity, pointingSign: f.pointingSign,
-                               wristIsLeft: f.wristIsLeft, angularSpeed: k.angularSpeed) {
+            // Only for devices with levels, and only while still pointing at it
+            // (a knob step must not keep a lock alive while the arm drops).
+            let adjustable = adjustableIDs.contains(lock.selectedID)
+            let onTarget = resolution.ids.contains(lock.selectedID)
+            let ev = adjustable ? knob.update(t: t, gravity: f.sample.gravity, pointingSign: f.pointingSign,
+                                              wristIsLeft: f.wristIsLeft, angularSpeed: k.angularSpeed) : nil
+            switch ev {
+            case .step(let dir)? where !onTarget:
+                Diag.event("knob_skip", ["dir": dir, "device": names[lock.selectedID], "reason": "off target",
+                                         "rollDeg": knob.angleDeg, "pitchDeg": k.pitchDeg])
             case .step(let dir)?:
                 let g = DetectedGesture(gesture: dir > 0 ? .flickUp : .flickDown, peakRate: 0, t: t)
-                aimLock.noteGesture(at: t)
                 Diag.event("knob_step", ["dir": dir, "device": names[lock.selectedID],
                                          "rollDeg": knob.angleDeg, "pitchDeg": k.pitchDeg])
                 emit(.gesture(g, target: lock.selectedID))
@@ -831,8 +841,10 @@ final class ControlEngine: ObservableObject {
         needsAlignment = unaligned
         anchorDevice = anchor.flatMap { config?.device(id: $0.id) }
         let names = Dictionary(roomDevices.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+        let adjustable = Set(roomDevices.filter { $0.kind == .dimmableLight || $0.kind == .fan }.map(\.id))
         pipeline.configure(candidates: candidates, anchor: anchor,
-                           settings: config?.settings ?? Settings(), resetLock: roomChanged, names: names)
+                           settings: config?.settings ?? Settings(), resetLock: roomChanged, names: names,
+                           adjustableIDs: adjustable)
         Diag.event("config_apply", [
             "room": newRoom?.name, "roomChanged": roomChanged, "devices": roomDevices.count,
             "candidates": candidates.count, "offsetDeg": offsetDeg, "offsetSource": offsetSource,
@@ -850,7 +862,7 @@ final class ControlEngine: ObservableObject {
         case .snapshot(let s):
             aim = s
         case .locked(let id):
-            WKInterfaceDevice.current().play(.click)
+            haptic(.start, "lock")
             if let d = device(id) { refreshState(d.entityID) }
         case .selectionChanged(let id):
             WKInterfaceDevice.current().play(.click)
@@ -940,9 +952,18 @@ final class ControlEngine: ObservableObject {
 
     // MARK: - Actions
 
+    /// Plays a haptic and logs it with the app state: watchOS only plays haptics
+    /// from the background while a workout session is active.
+    private func haptic(_ type: WKHapticType, _ what: String) {
+        let state = WKApplication.shared().applicationState
+        Diag.event("haptic", ["what": what, "type": type.rawValue,
+                              "appState": state == .active ? "active" : state == .inactive ? "inactive" : "background"])
+        WKInterfaceDevice.current().play(type)
+    }
+
     private func handleGesture(_ g: DetectedGesture, target: UUID) {
         // Immediate "got it" tap; success/failure follows when HA answers.
-        WKInterfaceDevice.current().play(g.gesture == .flickDown ? .directionDown : .directionUp)
+        haptic(g.gesture == .flickDown ? .directionDown : .directionUp, "recognized")
         if busy {
             queued = (g, target) // latest wins; run when the current call returns
             Diag.event("gesture_queued", ["type": g.gesture.rawValue, "device": device(target)?.name, "reason": "busy"])
@@ -1030,7 +1051,7 @@ final class ControlEngine: ObservableObject {
                 latenciesMs.append(latency * 1000)
                 if latenciesMs.count > 10 { latenciesMs.removeFirst(latenciesMs.count - 10) }
             }
-            WKInterfaceDevice.current().play(.success)
+            haptic(.success, "done")
             errorLine = nil
             actionLine = String(format: "%@ ✓ %.0f ms%@", gesture.gesture.displayName, latency * 1000,
                                 viaPhone ? " (via iPhone)" : "")
@@ -1051,7 +1072,7 @@ final class ControlEngine: ObservableObject {
     }
 
     private func fail(_ message: String) {
-        WKInterfaceDevice.current().play(.failure)
+        haptic(.failure, "failed")
         errorLine = message
     }
 

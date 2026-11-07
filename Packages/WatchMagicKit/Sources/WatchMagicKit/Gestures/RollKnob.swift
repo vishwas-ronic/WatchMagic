@@ -24,6 +24,9 @@ public struct RollKnob: Sendable {
         public var engageDeg: Double = 30
         /// Back within this disengages, degrees.
         public var releaseDeg: Double = 18
+        /// Beyond this it's not a knob turn but turning the wrist to look at the
+        /// watch (~90°, seen in the live log as 13 unintended steps): no steps.
+        public var maxEngageDeg: Double = 75
         /// Must be held past `engageDeg` this long before the first step, s.
         public var holdBeforeFirstStep: TimeInterval = 0.4
         /// Then one step per this interval, s.
@@ -110,7 +113,7 @@ public struct RollKnob: Sendable {
         let up = wristIsLeft ? -roll : roll
 
         if isEngaged {
-            if abs(roll) < c.releaseDeg { return disengage(at: t) }
+            if abs(roll) < c.releaseDeg || abs(roll) > c.maxEngageDeg { return disengage(at: t) }
             if t >= nextStepAt, angularSpeed < c.maxEngageSpeed {
                 nextStepAt = t + c.repeatInterval
                 lastActivity = t
@@ -118,7 +121,7 @@ public struct RollKnob: Sendable {
             }
             return nil
         }
-        if abs(roll) >= c.engageDeg, angularSpeed < c.maxEngageSpeed {
+        if abs(roll) >= c.engageDeg, abs(roll) <= c.maxEngageDeg, angularSpeed < c.maxEngageSpeed {
             if pastSince == nil { pastSince = t }
             if t - pastSince! >= c.holdBeforeFirstStep {
                 isEngaged = true

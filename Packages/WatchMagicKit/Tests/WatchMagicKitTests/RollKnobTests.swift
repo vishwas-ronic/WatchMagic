@@ -116,3 +116,19 @@ final class AimLearningTests: XCTestCase {
         XCTAssertEqual(p.mean!.angle(to: Vector3(1, 1, 0)), 0, accuracy: 1e-6)
     }
 }
+
+extension RollKnobTests {
+    /// Live log: turning the wrist to look at the watch (~90–140°) sent 13 steps.
+    func testLookingAtTheWatchDoesNotStep() {
+        var k = RollKnob()
+        k.setBaseline(gravity: Vector3(0, 0, -1), pointingSign: 1)
+        var t = 0.0, steps = 0
+        while t < 3 {
+            let a = 95.0 * .pi / 180
+            if case .step = k.update(t: t, gravity: Vector3(0, -sin(a), -cos(a)), pointingSign: 1,
+                                     wristIsLeft: true, angularSpeed: 0.2) { steps += 1 }
+            t += 0.02
+        }
+        XCTAssertEqual(steps, 0)
+    }
+}
