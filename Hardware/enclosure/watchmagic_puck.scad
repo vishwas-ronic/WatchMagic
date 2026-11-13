@@ -57,6 +57,13 @@ screw_head = 7.0;
 screw_x    = 20.0;
 screw_y    = 9.0;
 
+/* [Power] */
+// Hardwired 5 V from a mains module in a wall box behind the puck: the two
+// wires come through this hole in the back plate to the ESP32's 5V / GND pins.
+// (USB-C through the bottom edge still works; tape over whichever is unused.)
+rear_wire_d = 6.0;
+rear_wire_y = 2.0;   // just above the ESP32
+
 R  = D / 2;
 Ri = R - wall;
 z_port = back_t + esp_ledge + esp_t + usb_above_pcb;
@@ -88,6 +95,8 @@ module base() {
         }
         // USB-C straight into the ESP32
         translate([-usb_hole_w/2, -R - 1, z_port - usb_hole_h/2]) cube([usb_hole_w, wall + 3, usb_hole_h]);
+        // rear entry for hardwired 5 V
+        translate([0, rear_wire_y, -1]) cylinder(d = rear_wire_d, h = back_t + 2);
         // countersunk wall screws
         for (sx = [-1, 1]) translate([sx * screw_x, screw_y, 0]) {
             translate([0, 0, -1]) cylinder(d = screw_d, h = back_t + 2);

@@ -19,8 +19,9 @@ deep**, the same shell for both pucks. Ready-made STLs are in `enclosure/stl/`
 (`radar_base`, `radar_cover`, `uwb_base`, `uwb_cover`).
 
 - **Base**: screws to the wall with two countersunk #6 / M3.5 screws. The ESP32
-  sits in a pocket at the bottom, and the USB-C cable plugs straight into it
-  through the hole in the bottom edge.
+  sits in a pocket at the bottom. Power comes either from USB-C, plugged straight
+  into it through the hole in the bottom edge, or from hardwired 5 V through the
+  6 mm rear hole (see Power).
 - **Cover**: the flat front. It press-fits into the base, a key tab at the top
   makes it fit one way only, and there's a pry notch at the bottom. The sensor
   board slides into rails on its inside, behind a window thinned to 1 mm.
@@ -44,15 +45,48 @@ horizontal, with a 6 mm air gap (`gap`, about half a wavelength at 24 GHz).
 Confirm "up" and the x/y sign from the LD2450 manual once it's running: walk
 left and right and watch Target-1 X in Home Assistant.
 
-## Placement (Meghna Room)
+## Placement (Meghna Room, 5.4 × 4.4 m)
 
-- **Radar:** in the middle of a wall, about 1.5–2 m high, facing straight into
-  the room. Its ±60° view covers everything except small strips beside its own
-  wall (within about 1.2 m of that wall, near the corners). Its range is 6 m;
-  the room is 5.4 × 4.4 m.
-- **UWB:** on a different wall, high up, with a clear line of sight across the room.
-- Note where each one is (wall, distance from a corner, height) so it can be
-  placed in the house model. The radar's facing direction is that wall's normal.
+There are two pucks, and each has its own ESP32 inside, so there's nothing else to place.
+
+| Puck | Where | Height | Facing |
+|---|---|---|---|
+| Radar | Middle of one of the two **short (4.4 m) walls**: the one without the window, looking towards the bed / where you usually are | 1.2–1.5 m (below the fan's beam) | Straight into the room, along the 5.4 m length |
+| UWB | Middle of a **long wall** (Tubelight 1's or Tubelight 2's), not right next to the tubelight fitting | 2.0–2.2 m | Into the room; it only needs a clear line of sight |
+
+- The radar sees ±60°. On a short wall it covers the whole room except small
+  strips beside its own wall (within about 1.2 m of it, near the corners). The 5.4 m
+  length is inside its 6 m range.
+- Don't point the radar at the window or curtains (they move, and so does
+  whatever is outside), or at the AC. **Check with the ceiling fan on:** moving
+  blades can show up as a "person". Mounting lower keeps the fan out of the beam,
+  and a zone filter in Home Assistant can hide whatever is left.
+- UWB is blocked by bodies and furniture. Mounting it high over the bed / sofa
+  keeps the wrist in view.
+- Note each one's position (which wall, distance from a corner, height) so it
+  can go into the house model.
+
+## Power
+
+Each puck needs **5 V, under 0.5 A** (LD2450 about 0.1 A, ESP32 up to about 0.35 A
+on Wi-Fi peaks, DW3000 about 0.1 A).
+
+**A. USB-C (simplest):** any 5 V phone charger and a cable into the hole in the
+bottom edge.
+
+**B. Hardwired from 230 V (no visible cable):**
+- Fit a small certified mains-to-5 V module, e.g. Hi-Link **HLK-PM01** (230 V
+  AC → 5 V, 0.6 A, 34 × 20 × 15 mm), in a **flush electrical back box behind
+  the puck**, or in the nearest switchboard box, with a short 5 V run to the puck.
+- Mains side: L and N from a switched or always-on circuit, with a **0.5 A
+  slow-blow fuse on L**. Use proper terminal blocks or ferrules, and keep all
+  230 V parts inside the electrical box.
+- 5 V side: two-core wire through the wall and into the puck through the
+  **rear hole** (6 mm, centre of the back plate), to the ESP32's **5V** and
+  **GND** pins. On the radar puck, the LD2450's 5V comes from the same 5V pin.
+- **Never put the mains module inside the printed puck.** PLA/PETG isn't
+  flame-rated and the puck has no room for safe clearances. Turn the breaker off
+  while wiring, and use an electrician if you're unsure, per local code.
 
 ## Wiring
 
