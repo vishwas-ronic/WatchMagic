@@ -11,3 +11,7 @@ xcuserdata/
 *.token
 ha_token
 Secrets.xcconfig
+
+# ESPHome secrets
+Hardware/esphome/secrets.yaml
+Hardware/esphome/.esphome/
