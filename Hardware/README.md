@@ -5,8 +5,8 @@ assuming the fixed "seat", so you can point from anywhere in the room.
 
 | Puck | Inside | Gives |
 |---|---|---|
-| Radar | HLK-LD2450 + ESP32-S3 dev board | x/y of up to 3 people (body), via ESPHome → Home Assistant |
-| UWB | Ai-Thinker BU03 (DW3000) + ESP32-S3 dev board | distance from the puck to the watch (wrist) |
+| Radar | HLK-LD2450 + ESP32-C3 Super Mini | x/y of up to 3 people (body), via ESPHome → Home Assistant |
+| UWB | Ai-Thinker BU03 (DW3000) + ESP32-S3 Mini (S3FH4R2) | distance from the puck to the watch (wrist) |
 
 How they combine: the radar says where the people are. The UWB distance picks
 the one wearing the watch (distance ± arm length), places the wrist next to
@@ -14,26 +14,26 @@ that body, and holds your position when the radar loses you because you're stand
 
 ## Enclosure
 
-`enclosure/watchmagic_puck.scad`: a round puck, **82.6 mm (3.25") across**,
-22 mm deep (USB-C / hardwired 5 V) or 32 mm deep (built-in 230 V supply), the same
-shell for both pucks. It's sized around the ESP32-S3 dev board (WROOM module,
-two USB-C; PCB 28 × 57 mm plus a 5.7 mm antenna overhang). The board lies flat,
-USB end down, with the antenna at the top clear of the sensor and the mains
-compartment. Open the file in OpenSCAD with `part = "both"` to see the boards
-in place. The console prints fit checks. Ready-made STLs are in `enclosure/stl/`:
+`enclosure/watchmagic_puck.scad`: a round puck, **63.5 mm (2.5") across**,
+24 mm deep (USB-C / hardwired 5 V) or 32 mm deep (built-in 230 V supply), the
+same shell for both pucks. Both mini boards (about 22.5 × 18 mm) fit the same
+pocket. `watchmagic_puck_3.25in_devkit.scad` is a larger 3.25" version for the
+big ESP32-S3 dev board, if you ever need it. Ready-made STLs are in
+`enclosure/stl/`:
 
 | File | What |
 |---|---|
-| `base.stl` | base for USB-C or hardwired 5 V (22 mm deep puck) |
+| `base.stl` | base for USB-C or hardwired 5 V (24 mm deep puck) |
 | `base_mains.stl` + `mains_lid.stl` | base with a built-in 230 V supply (32 mm deep puck) |
 | `radar_cover.stl` / `uwb_cover.stl` | front cover (fits either base) |
 
 - **Base**: screws to the wall with two countersunk #6 / M3.5 screws. The ESP32
-  lies in a cradle on the left half, hot-glued in. **No pin headers**: solder the
-  wires to the pads. If your board has headers soldered pointing down, raise
-  `esp_ledge` to about 9 and `base_h` by the same. Power comes from USB-C (the
-  hole in the bottom edge lines up with the right-hand port), hardwired 5 V
-  through the 6 mm rear hole, or the built-in supply (see Power).
+  sits in a pocket at the bottom on a 5 mm shelf. **Header pins pointing down:**
+  solder the wires to the pins, then clip the pins to about 2 mm below the black
+  spacer. With the headers removed instead, set `esp_ledge = 1.5`. Power comes
+  from USB-C (plugged straight into the board through the hole in the bottom
+  edge), hardwired 5 V through the 6 mm rear hole, or the built-in supply (see
+  Power).
 - **Cover**: the flat front. It press-fits into the base, a key tab at the top
   makes it fit one way only, and there's a pry notch at the bottom. The sensor
   board slides into rails on its inside, behind a window thinned to 1 mm.
@@ -86,16 +86,17 @@ on Wi-Fi peaks, DW3000 about 0.1 A).
 **A. USB-C (simplest):** any 5 V phone charger and a cable into the hole in the
 bottom edge.
 
-**C. Built into the puck (`base_mains.stl`, 32 mm deep):** the HLK-PM01 stands
-in a closed compartment on the right half of the base, beside the ESP32, with a
-wiring bay above it. The sensor board is on the cover in front.
+**C. Built into the puck (`base_mains.stl`, 32 mm deep):** the HLK-PM01 lies in
+a closed compartment in the upper half of the base, with a wiring bay on its
+left where the mains cable comes in. The ESP32 is below it and the sensor board
+is on the cover in front.
 1. Run the mains cable (L + N, already fused in the wall box) out of the wall
    and through the 7 mm hole into the compartment. No other opening leads there.
-2. Turn the PM01 pins-up in the compartment, AC pins at the top beside the
+2. Turn the PM01 pins-up in the compartment, AC pins on the left beside the
    cable bay. Solder L and N to the AC pins and cover each joint with heat-shrink.
    Hot glue holds the module down.
 3. Solder 5 V wires to +Vo / −Vo and lead them out through the notch in the
-   compartment wall facing the ESP32 (low end) to the board's 5Vin / GND.
+   compartment's bottom wall (right) to the ESP32's 5V / GND.
 4. Close the compartment with `mains_lid.stl` (hot glue around the edge), then
    fit the ESP32 (hot glue), wire the sensor, and press the cover on.
 - Print the base and lid in **PETG or ASA, not PLA**. PLA softens at about 55 °C,
@@ -122,12 +123,12 @@ wiring bay above it. The sensor board is on the cover in front.
 
 **Radar puck** (see `esphome/watchmagic-radar.yaml`):
 
-| LD2450 | ESP32-S3 board |
+| LD2450 | ESP32-C3 Super Mini |
 |---|---|
-| 5V | 5Vin |
+| 5V | 5V |
 | GND | GND |
-| TX | GPIO18 |
-| RX | GPIO17 |
+| TX | GPIO4 |
+| RX | GPIO5 |
 
 **UWB puck:** the BU03 is a 23 × 13 mm SMD module (DW3000 + ceramic antenna,
 no microcontroller), so it talks SPI to the ESP32. Solder it to a small carrier
@@ -135,7 +136,7 @@ no microcontroller), so it talks SPI to the ESP32. Solder it to a small carrier
 copper and wires**. Take the pin numbers from Ai-Thinker's BU03 specification
 (V1.1.0, "Pin definition").
 
-| BU03 signal | ESP32-S3 board |
+| BU03 signal | ESP32-S3 Mini |
 |---|---|
 | VCC 3.3 V | 3V3 |
 | GND | GND |
@@ -146,8 +147,10 @@ copper and wires**. Take the pin numbers from Ai-Thinker's BU03 specification
 | IRQ | GPIO4 |
 | RSTn | GPIO5 |
 
-Avoid GPIO0, 3, 45 and 46 (boot strapping pins), GPIO19/20 (USB), GPIO43/44
-(serial console), and GPIO35–37 on boards with octal PSRAM (e.g. N16R8).
+On the S3 Mini, avoid GPIO0, 3, 45 and 46 (boot strapping pins), GPIO19/20 (USB)
+and GPIO43/44 (serial console). If a listed pin isn't broken out on your board,
+any other free GPIO works for CS, IRQ and RST. On the C3 Super Mini, avoid
+GPIO2, 8 and 9 (boot strapping pins) and GPIO20/21 (serial console).
 
 ## Status / risks
 
