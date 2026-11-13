@@ -15,8 +15,13 @@ that body, and holds your position when the radar loses you because you're stand
 ## Enclosure
 
 `enclosure/watchmagic_puck.scad`: a round puck, **63.5 mm (2.5") across, 22 mm
-deep**, the same shell for both pucks. Ready-made STLs are in `enclosure/stl/`
-(`radar_base`, `radar_cover`, `uwb_base`, `uwb_cover`).
+deep**, the same shell for both pucks. Ready-made STLs are in `enclosure/stl/`:
+
+| File | What |
+|---|---|
+| `base.stl` | base for USB-C or hardwired 5 V (22 mm deep puck) |
+| `base_mains.stl` + `mains_lid.stl` | base with a built-in 230 V supply (32 mm deep puck) |
+| `radar_cover.stl` / `uwb_cover.stl` | front cover (fits either base) |
 
 - **Base**: screws to the wall with two countersunk #6 / M3.5 screws. The ESP32
   sits in a pocket at the bottom. Power comes either from USB-C, plugged straight
@@ -74,6 +79,24 @@ on Wi-Fi peaks, DW3000 about 0.1 A).
 **A. USB-C (simplest):** any 5 V phone charger and a cable into the hole in the
 bottom edge.
 
+**C. Built into the puck (`base_mains.stl`, 32 mm deep):** the HLK-PM01 sits in
+a closed compartment in the upper half of the base, with the ESP32 below it and
+the sensor board on the cover in front.
+1. Run the mains cable (L + N, already fused in the wall box) out of the wall
+   and through the 7 mm hole into the compartment. No other opening leads there.
+2. Turn the PM01 pins-up in the compartment, AC pins on the left beside the
+   cable. Solder L and N to the AC pins and cover each joint with heat-shrink.
+   Hot glue holds the module down.
+3. Solder 5 V wires to +Vo / −Vo and lead them out through the notch in the
+   compartment's bottom wall to the ESP32's 5V / GND.
+4. Close the compartment with `mains_lid.stl` (hot glue around the edge), then
+   fit the ESP32 (hot glue), wire the sensor, and press the cover on.
+- Print the base and lid in **PETG or ASA, not PLA**. PLA softens at about 55 °C,
+  and the module and hot glue run warm.
+- The fuse stays in the wall box, not in the puck.
+- Mains inside a printed enclosure is your call. Switch the breaker off while
+  working, and have an electrician check it if unsure.
+
 **B. Hardwired from 230 V (no visible cable):**
 - Fit a small certified mains-to-5 V module, e.g. Hi-Link **HLK-PM01** (230 V
   AC → 5 V, 0.6 A, 34 × 20 × 15 mm), in a **flush electrical back box behind
@@ -84,9 +107,9 @@ bottom edge.
 - 5 V side: two-core wire through the wall and into the puck through the
   **rear hole** (6 mm, centre of the back plate), to the ESP32's **5V** and
   **GND** pins. On the radar puck, the LD2450's 5V comes from the same 5V pin.
-- **Never put the mains module inside the printed puck.** PLA/PETG isn't
-  flame-rated and the puck has no room for safe clearances. Turn the breaker off
-  while wiring, and use an electrician if you're unsure, per local code.
+- Turn the breaker off while wiring, and use an electrician if you're unsure,
+  per local code. To put the module inside the puck instead, use option C
+  (its closed compartment); never loose in the 22 mm puck.
 
 ## Wiring
 

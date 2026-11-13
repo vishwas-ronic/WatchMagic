@@ -107,7 +107,7 @@ Legend: [x] done & verified on the Mac · [ ] open · [~] code done, needs on-de
 ## 7. Room position sensors (user decision 2026-11-13)
 
 - [x] Decision: HLK-LD2450 radar (people x/y) + the user's Ai-Thinker BU03 UWB with an ESP32 (watch distance), one of each per room. Fusion: radar positions the people; the UWB distance picks the wearer and places the wrist; it holds your position when the radar loses you standing still.
-- [x] Enclosure: round puck, 63.5 mm (2.5") × 22 mm, same shell for both (`Hardware/enclosure/watchmagic_puck.scad`, STLs in `stl/`). Rendered with OpenSCAD (snapshot cask; the stable cask is disabled). Not printed yet; board sizes are listing values, so measure before printing.
+- [x] Enclosure: round puck, 63.5 mm (2.5") × 22 mm (or 32 mm with a built-in HLK-PM01 230 V supply in a closed compartment: `mains=true`), same shell for both (`Hardware/enclosure/watchmagic_puck.scad`, STLs in `stl/`). Rendered with OpenSCAD (snapshot cask; the stable cask is disabled). Not printed yet; board sizes are listing values, so measure before printing.
 - [x] ESPHome config for the radar puck (`Hardware/esphome/watchmagic-radar.yaml`). UNVERIFIED: not compiled.
 - [ ] User: order an LD2450 and 2 ESP32-C3 SuperMinis; measure the boards; print; mount (radar mid-wall at 1.5–2 m; UWB on another wall, high); report positions.
 - [ ] BU03: ESP32 ↔ DW3000 SPI bring-up (read the device ID), then the Apple Nearby Interaction accessory protocol on ESP32 + DW3000. Biggest risk; Qorvo only ships it for the DWM3001CDK.
