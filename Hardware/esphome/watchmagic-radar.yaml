@@ -1,11 +1,11 @@
-# WatchMagic radar puck: HLK-LD2450 on an ESP32-C3 SuperMini.
+# WatchMagic radar puck: HLK-LD2450 on an ESP32-S3 dev board (WROOM, two USB-C).
 # Sends up to 3 people's x/y (mm, radar frame) to Home Assistant.
 # Secrets go in esphome/secrets.yaml (never committed).
 #
-# Wiring (LD2450 4-pin header → SuperMini):
-#   5V  → 5V      GND → GND
-#   TX  → GPIO4   (ESP RX)
-#   RX  → GPIO5   (ESP TX)
+# Wiring (LD2450 4-pin header → ESP32-S3 board):
+#   5V  → 5Vin    GND → GND
+#   TX  → GPIO18  (ESP RX)
+#   RX  → GPIO17  (ESP TX)
 # UNVERIFIED: not yet compiled here (`esphome config watchmagic-radar.yaml` to check).
 
 substitutions:
@@ -16,7 +16,7 @@ esphome:
   friendly_name: WatchMagic Radar Meghna
 
 esp32:
-  board: esp32-c3-devkitm-1
+  board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
 
@@ -37,8 +37,8 @@ ota:
 
 uart:
   id: ld2450_uart
-  rx_pin: GPIO4
-  tx_pin: GPIO5
+  rx_pin: GPIO18
+  tx_pin: GPIO17
   baud_rate: 256000
   parity: NONE
   stop_bits: 1
